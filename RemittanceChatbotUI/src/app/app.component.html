@@ -1,0 +1,21 @@
+<div class="app-container">
+  <header>
+    <div class="logo">
+      <h1>Infinora RemitAssist</h1>
+    </div>
+    <nav>
+      <a [routerLink]="['/']" routerLinkActive="active" [routerLinkActiveOptions]="{exact: true}">Chat</a>
+      <a *ngIf="isAuthenticated" [routerLink]="['/send-money']" routerLinkActive="active">Send Money</a>
+      <a *ngIf="!isAuthenticated" [routerLink]="['/login']" routerLinkActive="active">Login</a>
+      <a *ngIf="isAuthenticated" (click)="logout()" class="logout-link">Logout</a>
+    </nav>
+  </header>
+
+  <main>
+    <router-outlet></router-outlet>
+  </main>
+
+  <footer>
+    <p>&copy; 2025 RemitAssist - All Rights Reserved By Infinora</p>
+  </footer>
+</div>

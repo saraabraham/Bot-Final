@@ -1,0 +1,46 @@
+<div class="chat-container">
+    <div class="chat-header">
+        <h2>Infinora RemitAssist</h2>
+        <div class="header-actions">
+            <button *ngIf="!isAuthenticated" (click)="login()" class="login-button">Login</button>
+            <button (click)="clearChat()" class="clear-button">Clear Chat</button>
+        </div>
+    </div>
+
+    <div #chatMessages class="chat-messages">
+        <div *ngFor="let message of messages"
+            [ngClass]="{'user-message': message.sender === 'user', 'bot-message': message.sender === 'bot'}">
+            <div class="message-content">
+                <ng-container *ngIf="!message.isProcessing; else processingTemplate">
+                    {{ message.text }}
+                </ng-container>
+                <ng-template #processingTemplate>
+                    <div class="typing-indicator">
+                        <span class="dot"></span>
+                        <span class="dot"></span>
+                        <span class="dot"></span>
+                    </div>
+                </ng-template>
+            </div>
+            <div class="message-time">
+                {{ message.timestamp | date:'shortTime' }}
+            </div>
+        </div>
+    </div>
+
+    <div class="chat-input">
+        <input type="text" [(ngModel)]="newMessage" placeholder="Type your message..." (keyup.enter)="sendMessage()"
+            [disabled]="isListening">
+
+        <button (click)="sendMessage()" [disabled]="!newMessage.trim()" class="send-button">
+            <i class="fas fa-paper-plane"></i>
+            Send
+        </button>
+
+        <button (click)="isListening ? stopVoiceRecognition() : startVoiceRecognition()"
+            [ngClass]="{'active': isListening}" class="voice-button">
+            <i class="fas" [ngClass]="{'fa-microphone': !isListening, 'fa-stop': isListening}"></i>
+            {{ isListening ? 'Stop' : 'Voice' }}
+        </button>
+    </div>
+</div>

@@ -1,0 +1,12 @@
+{
+  "Version": 1,
+  "Hash": "ZpBvyO/ZedcBd9C0wKkEAihnVSb85RkQPpA7UDotbis=",
+  "Source": "RemittanceAPI",
+  "BasePath": "_content/RemittanceAPI",
+  "Mode": "Default",
+  "ManifestType": "Build",
+  "ReferencedProjectsConfiguration": [],
+  "DiscoveryPatterns": [],
+  "Assets": [],
+  "Endpoints": []
+}

@@ -1,0 +1,203 @@
+.voice-input-container {
+    display: flex;
+    flex-direction: column;
+    margin-bottom: 1rem;
+
+    .voice-controls {
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+        margin-bottom: 0.5rem;
+
+        .voice-button {
+            display: flex;
+            align-items: center;
+            padding: 0.7rem 1.5rem;
+            background-color: #0066cc;
+            color: white;
+            border: none;
+            border-radius: 25px;
+            font-size: 0.9rem;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            gap: 0.5rem;
+
+            .mic-icon {
+                position: relative;
+                width: 24px;
+                height: 24px;
+                display: flex;
+                justify-content: center;
+                align-items: center;
+
+                .mic-waves {
+                    position: absolute;
+                    top: 50%;
+                    left: 50%;
+                    transform: translate(-50%, -50%);
+                    width: 100%;
+                    height: 100%;
+
+                    span {
+                        position: absolute;
+                        top: 0;
+                        left: 0;
+                        width: 100%;
+                        height: 100%;
+                        border: 1px solid rgba(255, 255, 255, 0.5);
+                        border-radius: 50%;
+                        animation: mic-wave 1.5s infinite;
+
+                        &:nth-child(1) {
+                            animation-delay: 0s;
+                        }
+
+                        &:nth-child(2) {
+                            animation-delay: 0.3s;
+                        }
+
+                        &:nth-child(3) {
+                            animation-delay: 0.6s;
+                        }
+
+                        &:nth-child(4) {
+                            animation-delay: 0.9s;
+                        }
+                    }
+                }
+            }
+
+            &.active {
+                background-color: #e74c3c;
+
+                &:hover {
+                    background-color: darken(#e74c3c, 10%);
+                }
+            }
+
+            &.disabled {
+                background-color: #cccccc;
+                cursor: not-allowed;
+            }
+
+            &:hover:not(.disabled) {
+                background-color: darken(#0066cc, 10%);
+            }
+        }
+
+        .cancel-button {
+            display: flex;
+            align-items: center;
+            padding: 0.7rem 1rem;
+            background-color: #f2f2f2;
+            color: #666;
+            border: none;
+            border-radius: 25px;
+            font-size: 0.9rem;
+            cursor: pointer;
+            transition: background-color 0.2s;
+            gap: 0.5rem;
+
+            &:hover {
+                background-color: darken(#f2f2f2, 10%);
+            }
+        }
+    }
+
+    .transcript-container {
+        background-color: #f8f9fa;
+        border-radius: 8px;
+        padding: 1rem;
+        margin-top: 0.5rem;
+
+        .transcript-status {
+            font-size: 0.8rem;
+            color: #666;
+            margin-bottom: 0.5rem;
+
+            .status-listening {
+                color: #0066cc;
+                display: flex;
+                align-items: center;
+
+                &:after {
+                    content: '';
+                    width: 8px;
+                    height: 8px;
+                    background-color: #0066cc;
+                    border-radius: 50%;
+                    margin-left: 0.5rem;
+                    animation: blink 1s infinite;
+                }
+            }
+
+            .status-processing {
+                color: #e67e22;
+            }
+        }
+
+        .transcript-text {
+            font-style: italic;
+            color: #333;
+            word-break: break-word;
+        }
+    }
+
+    .error-message {
+        color: #e74c3c;
+        margin-top: 0.5rem;
+        font-size: 0.9rem;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+    }
+
+    .info-message {
+        color: #3498db;
+        margin-top: 0.5rem;
+        font-size: 0.9rem;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+    }
+}
+
+@keyframes mic-wave {
+    0% {
+        transform: scale(1);
+        opacity: 0.8;
+    }
+
+    100% {
+        transform: scale(1.8);
+        opacity: 0;
+    }
+}
+
+@keyframes blink {
+
+    0%,
+    100% {
+        opacity: 1;
+    }
+
+    50% {
+        opacity: 0.3;
+    }
+}
+
+@media (max-width: 768px) {
+    .voice-input-container {
+        .voice-controls {
+
+            .voice-button,
+            .cancel-button {
+                padding: 0.6rem 1rem;
+
+                span {
+                    display: none;
+                }
+            }
+        }
+    }
+}

@@ -1,0 +1,48 @@
+<div class="voice-input-container">
+    <div class="voice-controls">
+        <button [disabled]="!microphoneSupported || processingAudio"
+            [ngClass]="{'active': isListening, 'disabled': !microphoneSupported || processingAudio}"
+            (click)="toggleVoiceRecognition()" class="voice-button">
+            <div class="mic-icon">
+                <i class="fas" [ngClass]="{'fa-microphone': !isListening, 'fa-stop': isListening}"></i>
+                <div class="mic-waves" *ngIf="isListening">
+                    <span></span>
+                    <span></span>
+                    <span></span>
+                    <span></span>
+                </div>
+            </div>
+            <span>{{ isListening ? 'Stop' : 'Speak' }}</span>
+        </button>
+
+        <button *ngIf="isListening || transcript" (click)="cancelVoiceInput()" class="cancel-button">
+            <i class="fas fa-times"></i>
+            <span>Cancel</span>
+        </button>
+    </div>
+
+    <div class="transcript-container" *ngIf="isListening || transcript">
+        <div class="transcript-status">
+            <ng-container *ngIf="isListening">
+                <span class="status-listening">Listening...</span>
+            </ng-container>
+            <ng-container *ngIf="!isListening && transcript">
+                <span class="status-processing">Processing...</span>
+            </ng-container>
+        </div>
+
+        <div class="transcript-text" *ngIf="transcript">
+            "{{ transcript }}"
+        </div>
+    </div>
+
+    <div class="error-message" *ngIf="errorMessage">
+        <i class="fas fa-exclamation-circle"></i>
+        {{ errorMessage }}
+    </div>
+
+    <div class="info-message" *ngIf="!microphoneSupported">
+        <i class="fas fa-info-circle"></i>
+        Speech recognition is not supported in your browser. Please try a different browser like Chrome or Edge.
+    </div>
+</div>
