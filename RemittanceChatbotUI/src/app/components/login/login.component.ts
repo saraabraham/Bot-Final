@@ -16,7 +16,7 @@ import { AuthService } from '../../services/auth.service';
     styleUrls: ['./login.component.scss']
 })
 export class LoginComponent implements OnInit {
-    loginForm!: FormGroup;
+    loginForm: FormGroup;
     loading = false;
     error = '';
     returnUrl = '/chat';
@@ -26,21 +26,39 @@ export class LoginComponent implements OnInit {
         private route: ActivatedRoute,
         private router: Router,
         private authService: AuthService
-    ) { }
-
-    // src/app/components/login/login.component.ts
-    ngOnInit(): void {
+    ) {
         this.loginForm = this.fb.group({
             email: ['', [Validators.required, Validators.email]],
             password: ['', Validators.required],
             rememberMe: [false]
         });
-
-        // Get return URL from route parameters or default to '/chat'
+    }
+    ngOnInit(): void {
         this.returnUrl = this.route.snapshot.queryParams['returnUrl'] || '/chat';
-
         console.log('Login component initialized, current auth state:', this.authService.isAuthenticated);
         console.log('Return URL is:', this.returnUrl);
+
+        // Check if we have remembered credentials - safely
+        try {
+            const rememberedEmail = this.authService.getRememberedCredentials();
+            console.log('Remembered email type:', typeof rememberedEmail);
+
+            if (rememberedEmail && typeof rememberedEmail === 'string') {
+                console.log('Found remembered email:', rememberedEmail);
+                this.loginForm.patchValue({
+                    email: rememberedEmail,
+                    rememberMe: true
+                });
+            } else if (rememberedEmail) {
+                console.warn('Found remembered email but it has wrong type:', rememberedEmail);
+                // Clear invalid data
+                this.authService.rememberCredentials('', false);
+            }
+        } catch (error) {
+            console.error('Error retrieving remembered credentials:', error);
+            // Clear potentially corrupted data
+            this.authService.rememberCredentials('', false);
+        }
 
         // Only redirect if already logged in and NOT coming from a protected route
         if (this.authService.isAuthenticated && !this.route.snapshot.queryParams['returnUrl']) {
@@ -48,14 +66,17 @@ export class LoginComponent implements OnInit {
             this.router.navigate([this.returnUrl]);
         }
     }
-    // In login.component.ts
-    // src/app/components/login/login.component.ts
+
     onSubmit(): void {
         if (this.loading) {
             console.log('Submit clicked while already loading, ignoring');
             return;
         }
         if (this.loginForm.invalid) {
+            // Mark all fields as touched to show validation errors
+            Object.keys(this.loginForm.controls).forEach(key => {
+                this.loginForm.get(key)?.markAsTouched();
+            });
             return;
         }
 
@@ -85,6 +106,13 @@ export class LoginComponent implements OnInit {
             .subscribe({
                 next: (response) => {
                     console.log('Login successful, attempting navigation to:', this.returnUrl);
+
+                    // Store "Remember Me" credentials if checked
+                    if (rememberMe) {
+                        this.authService.rememberCredentials(email, true);
+                    } else {
+                        this.authService.rememberCredentials('', false);
+                    }
                     this.forceAuthRefresh(response);
 
                     // Add a small delay to ensure auth state is updated before navigation
@@ -108,6 +136,7 @@ export class LoginComponent implements OnInit {
                     }, 100);
                 },
                 error: (error) => {
+                    clearTimeout(loadingTimeout); // Clear the timeout
                     console.error('Login error:', error);
                     this.error = error.error?.message || 'Login failed. Please check your credentials.';
                     this.loading = false;
