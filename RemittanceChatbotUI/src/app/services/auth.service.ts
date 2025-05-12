@@ -21,42 +21,75 @@ export class AuthService {
         @Inject(PLATFORM_ID) private platformId: Object
     ) {
         this.isBrowser = isPlatformBrowser(this.platformId);
-
-        // Check for existing token on startup (only in browser)
         if (this.isBrowser) {
-            const storedUser = localStorage.getItem('currentUser');
+            console.log('Auth service initializing in browser environment');
+
+            // Check both storage types
+            const storedUserLocal = localStorage.getItem('currentUser');
+            const storedUserSession = sessionStorage.getItem('currentUser');
+
+            console.log('Found stored user?',
+                'localStorage:', !!storedUserLocal,
+                'sessionStorage:', !!storedUserSession);
+
+            const storedUser = storedUserSession || storedUserLocal;
             if (storedUser) {
-                this.currentUserSubject.next(JSON.parse(storedUser));
+                try {
+                    const user = JSON.parse(storedUser);
+                    console.log('Loaded stored user:', user);
+                    this.currentUserSubject.next(user);
+                } catch (e) {
+                    console.error('Error parsing stored user:', e);
+                }
             }
         }
     }
 
-    login(email: string, password: string): Observable<LoginResponse> {
+    // In auth.service.ts
+    // src/app/services/auth.service.ts
+    login(email: string, password: string, rememberMe: boolean = false): Observable<LoginResponse> {
+        console.log(`Sending login request to ${this.apiUrl}/login`, { email, rememberMe });
+
         return this.http.post<LoginResponse>(`${this.apiUrl}/login`, { email, password })
             .pipe(
-                tap(response => {
-                    const user: User = {
-                        id: response.id,
-                        name: response.name,
-                        email: response.email,
-                        phone: response.phone,
-                        preferredCurrency: response.preferredCurrency,
-                        isAuthenticated: response.isAuthenticated
-                    };
+                tap({
+                    next: (response) => {
+                        console.log('Received login response:', response);
 
-                    if (this.isBrowser) {
-                        localStorage.setItem('currentUser', JSON.stringify(user));
-                        localStorage.setItem('token', response.token);
+                        const user: User = {
+                            id: response.id,
+                            name: response.name,
+                            email: response.email,
+                            phone: response.phone,
+                            preferredCurrency: response.preferredCurrency,
+                            isAuthenticated: response.isAuthenticated
+                        };
+
+                        console.log('Created user object:', user);
+
+                        if (this.isBrowser) {
+                            // Use localStorage for "remember me", sessionStorage otherwise
+                            const storage = rememberMe ? localStorage : sessionStorage;
+                            storage.setItem('currentUser', JSON.stringify(user));
+                            storage.setItem('token', response.token);
+                            console.log('Stored user data in', rememberMe ? 'localStorage' : 'sessionStorage');
+                        }
+
+                        this.currentUserSubject.next(user);
+                        console.log('Updated currentUserSubject');
+                    },
+                    error: (error) => {
+                        console.error('Login request error:', error);
                     }
-                    this.currentUserSubject.next(user);
                 })
             );
     }
-
     logout(): void {
         if (this.isBrowser) {
             localStorage.removeItem('currentUser');
             localStorage.removeItem('token');
+            sessionStorage.removeItem('currentUser');
+            sessionStorage.removeItem('token');
         }
         this.currentUserSubject.next(null);
     }
@@ -71,7 +104,7 @@ export class AuthService {
 
     get authToken(): string | null {
         if (this.isBrowser) {
-            return localStorage.getItem('token');
+            return sessionStorage.getItem('token') || localStorage.getItem('token');
         }
         return null;
     }

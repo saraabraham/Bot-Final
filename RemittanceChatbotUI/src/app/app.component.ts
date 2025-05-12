@@ -1,8 +1,13 @@
 // src/app/app.component.ts
-import { Component, OnInit } from '@angular/core';
+import { Component, OnInit, PLATFORM_ID, Inject } from '@angular/core';
+import { isPlatformBrowser } from '@angular/common';
+
+// Import necessary Angular modules
 import { CommonModule } from '@angular/common';
-import { RouterModule } from '@angular/router';
+import { RouterModule, Router, NavigationEnd } from '@angular/router';
 import { AuthService } from './services/auth.service';
+import { filter } from 'rxjs/operators';
+
 
 @Component({
   selector: 'app-root',
@@ -16,17 +21,28 @@ import { AuthService } from './services/auth.service';
 })
 export class AppComponent implements OnInit {
   isAuthenticated = false;
+  private isBrowser: boolean;
 
-  constructor(private authService: AuthService) { }
+  constructor(
+    @Inject(PLATFORM_ID) private platformId: Object,
+    private router: Router,
+    private authService: AuthService) {
+    this.isBrowser = isPlatformBrowser(this.platformId);
+  }
 
   ngOnInit() {
     // Subscribe to authentication status
     this.authService.currentUser$.subscribe(user => {
       this.isAuthenticated = !!user?.isAuthenticated;
     });
+    if (this.isBrowser) {
+      this.router.events.pipe(
+        filter(event => event instanceof NavigationEnd)).subscribe(() => { window.scrollTo(0, 0); });
+    }
   }
 
   logout() {
     this.authService.logout();
+    this.router.navigate(['/login']);
   }
 }

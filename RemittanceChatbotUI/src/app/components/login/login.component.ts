@@ -19,7 +19,7 @@ export class LoginComponent implements OnInit {
     loginForm!: FormGroup;
     loading = false;
     error = '';
-    returnUrl = '/';
+    returnUrl = '/chat';
 
     constructor(
         private fb: FormBuilder,
@@ -28,41 +28,99 @@ export class LoginComponent implements OnInit {
         private authService: AuthService
     ) { }
 
+    // src/app/components/login/login.component.ts
     ngOnInit(): void {
         this.loginForm = this.fb.group({
             email: ['', [Validators.required, Validators.email]],
-            password: ['', Validators.required]
+            password: ['', Validators.required],
+            rememberMe: [false]
         });
 
-        // Get return URL from route parameters or default to '/'
-        this.returnUrl = this.route.snapshot.queryParams['returnUrl'] || '/';
+        // Get return URL from route parameters or default to '/chat'
+        this.returnUrl = this.route.snapshot.queryParams['returnUrl'] || '/chat';
 
-        // Redirect if already logged in
-        if (this.authService.isAuthenticated) {
+        console.log('Login component initialized, current auth state:', this.authService.isAuthenticated);
+        console.log('Return URL is:', this.returnUrl);
+
+        // Only redirect if already logged in and NOT coming from a protected route
+        if (this.authService.isAuthenticated && !this.route.snapshot.queryParams['returnUrl']) {
+            console.log('Already authenticated, navigating to:', this.returnUrl);
             this.router.navigate([this.returnUrl]);
         }
     }
-
+    // In login.component.ts
+    // src/app/components/login/login.component.ts
     onSubmit(): void {
+        if (this.loading) {
+            console.log('Submit clicked while already loading, ignoring');
+            return;
+        }
         if (this.loginForm.invalid) {
             return;
         }
 
         this.loading = true;
         this.error = '';
+        const resetLoading = () => {
+            console.log('Resetting loading state');
+            this.loading = false;
+        };
+
+        // Set a timeout to auto-reset loading state after 10 seconds
+        const loadingTimeout = setTimeout(() => {
+            if (this.loading) {
+                console.log('Loading timeout triggered');
+                this.error = 'Request is taking too long. Please try again.';
+                resetLoading();
+            }
+        }, 10000);
 
         const email = this.loginForm.get('email')?.value;
         const password = this.loginForm.get('password')?.value;
+        const rememberMe = this.loginForm.get('rememberMe')?.value;
 
-        this.authService.login(email, password)
+        console.log('Attempting login for:', email);
+
+        this.authService.login(email, password, rememberMe)
             .subscribe({
-                next: () => {
-                    this.router.navigate([this.returnUrl]);
+                next: (response) => {
+                    console.log('Login successful, attempting navigation to:', this.returnUrl);
+                    this.forceAuthRefresh(response);
+
+                    // Add a small delay to ensure auth state is updated before navigation
+                    setTimeout(() => {
+                        console.log('Current auth state before navigation:', this.authService.isAuthenticated);
+                        this.router.navigate([this.returnUrl])
+                            .then(success => {
+                                console.log('Navigation result:', success ? 'successful' : 'failed');
+                                if (!success) {
+                                    console.error('Navigation failed to:', this.returnUrl);
+                                    // Try navigating to the home page as fallback
+                                    this.router.navigate(['/chat']);
+                                }
+                                this.loading = false;
+                            })
+                            .catch(err => {
+                                console.error('Navigation error:', err);
+                                this.error = 'Error navigating after login. Please try again.';
+                                this.loading = false;
+                            });
+                    }, 100);
                 },
-                error: error => {
-                    this.error = error.error.message || 'Login failed. Please check your credentials.';
+                error: (error) => {
+                    console.error('Login error:', error);
+                    this.error = error.error?.message || 'Login failed. Please check your credentials.';
                     this.loading = false;
                 }
             });
     }
+    private forceAuthRefresh(user: any): void {
+        // Force update the auth state
+        this.authService['currentUserSubject'].next(user);
+
+        // Double-check authentication state
+        console.log('After forced refresh, auth state:', this.authService.isAuthenticated);
+    }
+
+
 }

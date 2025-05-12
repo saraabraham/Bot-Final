@@ -45,3 +45,22 @@
         }
     }
 }
+
+// src/app/components/login/login.component.scss
+// Add this to your existing styles
+
+.form-check {
+    margin-bottom: 1.5rem;
+    display: flex;
+    align-items: center;
+
+    input[type="checkbox"] {
+        width: auto;
+        margin-right: 10px;
+    }
+
+    label {
+        margin-bottom: 0;
+        font-weight: normal;
+    }
+}
