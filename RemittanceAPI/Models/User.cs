@@ -10,7 +10,10 @@ namespace RemittanceAPI.Models
         public string Email { get; set; }
         public string PasswordHash { get; set; }
         public string? Phone { get; set; }
+
+        // Make sure this property exists for storing recipient IDs
         public List<string> SavedRecipients { get; set; } = new List<string>();
+
         public string PreferredCurrency { get; set; } = "USD";
     }
 

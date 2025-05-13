@@ -1,5 +1,5 @@
-import { Component, OnInit } from '@angular/core';
-import { CommonModule } from '@angular/common';
+import { Component, Inject, OnInit, PLATFORM_ID } from '@angular/core';
+import { CommonModule, isPlatformBrowser } from '@angular/common';
 import { ReactiveFormsModule, FormBuilder, FormGroup, Validators } from '@angular/forms';
 import { RouterModule, ActivatedRoute, Router } from '@angular/router';
 import { AuthService } from '../../services/auth.service';
@@ -20,13 +20,17 @@ export class LoginComponent implements OnInit {
     loading = false;
     error = '';
     returnUrl = '/chat';
+    isBrowser: any;
 
     constructor(
         private fb: FormBuilder,
         private route: ActivatedRoute,
         private router: Router,
-        private authService: AuthService
+        private authService: AuthService,
+        @Inject(PLATFORM_ID) private platformId: Object
     ) {
+        this.isBrowser = isPlatformBrowser(this.platformId);
+
         this.loginForm = this.fb.group({
             email: ['', [Validators.required, Validators.email]],
             password: ['', Validators.required],
@@ -38,26 +42,28 @@ export class LoginComponent implements OnInit {
         console.log('Login component initialized, current auth state:', this.authService.isAuthenticated);
         console.log('Return URL is:', this.returnUrl);
 
-        // Check if we have remembered credentials - safely
-        try {
-            const rememberedEmail = this.authService.getRememberedCredentials();
-            console.log('Remembered email type:', typeof rememberedEmail);
+        if (this.isBrowser) {
+            // Check if we have remembered credentials - safely
+            try {
+                const rememberedEmail = this.authService.getRememberedCredentials();
+                console.log('Remembered email type:', typeof rememberedEmail);
 
-            if (rememberedEmail && typeof rememberedEmail === 'string') {
-                console.log('Found remembered email:', rememberedEmail);
-                this.loginForm.patchValue({
-                    email: rememberedEmail,
-                    rememberMe: true
-                });
-            } else if (rememberedEmail) {
-                console.warn('Found remembered email but it has wrong type:', rememberedEmail);
-                // Clear invalid data
+                if (rememberedEmail && typeof rememberedEmail === 'string') {
+                    console.log('Found remembered email:', rememberedEmail);
+                    this.loginForm.patchValue({
+                        email: rememberedEmail,
+                        rememberMe: true
+                    });
+                } else if (rememberedEmail) {
+                    console.warn('Found remembered email but it has wrong type:', rememberedEmail);
+                    // Clear invalid data
+                    this.authService.rememberCredentials('', false);
+                }
+            } catch (error) {
+                console.error('Error retrieving remembered credentials:', error);
+                // Clear potentially corrupted data
                 this.authService.rememberCredentials('', false);
             }
-        } catch (error) {
-            console.error('Error retrieving remembered credentials:', error);
-            // Clear potentially corrupted data
-            this.authService.rememberCredentials('', false);
         }
 
         // Only redirect if already logged in and NOT coming from a protected route

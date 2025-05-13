@@ -1,24 +1,27 @@
 <!-- src/app/components/remittance-form/remittance-form.component.html -->
 <div class="remittance-form-container">
     <h2>Send Money</h2>
+    <div *ngIf="errorMessage" class="alert alert-danger">
+        <i class="fas fa-exclamation-circle"></i>
+        {{ errorMessage }}
+    </div>
+
 
     <!-- Missing [formGroup] attribute on the form element -->
     <form [formGroup]="remittanceForm" (ngSubmit)="onSubmit()">
         <div class="form-group">
             <label for="amount">Amount</label>
             <div class="input-group">
-                <input type="number" id="amount" formControlName="amount" placeholder="Enter amount">
+                <input type="number" id="amount" formControlName="amount" placeholder="Enter amount" required min="1">
                 <select id="currency-select" formControlName="currency" title="Select currency">
                     <option *ngFor="let currency of currencies" [value]="currency">{{currency}}</option>
                 </select>
             </div>
-            <div class="error-message"
-                *ngIf="remittanceForm.get('amount')?.touched && remittanceForm.get('amount')?.errors?.['required']">
-                Amount is required
-            </div>
-            <div class="error-message"
-                *ngIf="remittanceForm.get('amount')?.touched && remittanceForm.get('amount')?.errors?.['min']">
-                Amount must be positive
+            <div class="error-message" *ngIf="remittanceForm.get('amount')?.touched && 
+                  (remittanceForm.get('amount')?.errors?.['required'] || 
+                   remittanceForm.get('amount')?.value === null || 
+                   remittanceForm.get('amount')?.value <= 0)">
+                Amount is required and must be greater than zero
             </div>
         </div>
 
@@ -96,7 +99,7 @@
 
         <div class="form-actions">
             <button type="button" (click)="cancel()" class="cancel-button">Cancel</button>
-            <button type="submit" class="send-button" [disabled]="submitting">
+            <button type="submit" class="send-button" [disabled]="submitting || remittanceForm.invalid">
                 <span *ngIf="!submitting">Send Money</span>
                 <span *ngIf="submitting">Processing...</span>
             </button>

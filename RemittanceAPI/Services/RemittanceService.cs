@@ -89,40 +89,102 @@ namespace RemittanceAPI.Services
         {
             _logger.LogInformation($"Saving recipient {recipient.Name}");
 
-            // Generate ID if not provided
-            if (string.IsNullOrEmpty(recipient.Id))
+            try
             {
+                // Check if this is an update to an existing recipient or a new one
+                if (!string.IsNullOrEmpty(recipient.Id))
+                {
+                    _logger.LogInformation($"Checking for existing recipient with ID: {recipient.Id}");
+                    // Try to find the recipient with this ID
+                    var existingById = await _dbContext.Recipients
+                        .FirstOrDefaultAsync(r => r.Id == recipient.Id);
+
+                    if (existingById != null)
+                    {
+                        _logger.LogInformation($"Updating existing recipient with ID: {recipient.Id}");
+                        // Update properties
+                        _dbContext.Entry(existingById).CurrentValues.SetValues(recipient);
+                        await _dbContext.SaveChangesAsync();
+                        return existingById;
+                    }
+                }
+
+                // If we get here, either the ID was null/empty, or no recipient with that ID was found
+                // Check if a recipient with the same name and account number already exists
+                var existingRecipient = await _dbContext.Recipients
+                    .FirstOrDefaultAsync(r =>
+                        r.Name == recipient.Name &&
+                        r.AccountNumber == recipient.AccountNumber &&
+                        r.Country == recipient.Country);
+
+                if (existingRecipient != null)
+                {
+                    _logger.LogInformation($"Found existing recipient by name/account: {existingRecipient.Id}");
+                    return existingRecipient;
+                }
+
+                // Generate a new ID for new recipients
                 recipient.Id = Guid.NewGuid().ToString();
-            }
+                _logger.LogInformation($"Adding new recipient with generated ID: {recipient.Id}");
 
-            // Check if recipient already exists
-            var existingRecipient = await _dbContext.Recipients
-                .FirstOrDefaultAsync(r => r.Id == recipient.Id);
-
-            if (existingRecipient != null)
-            {
-                // Update existing recipient
-                _dbContext.Entry(existingRecipient).CurrentValues.SetValues(recipient);
-            }
-            else
-            {
-                // Add new recipient
+                // Add as a new recipient
                 await _dbContext.Recipients.AddAsync(recipient);
+                await _dbContext.SaveChangesAsync();
+                return recipient;
             }
-
-            await _dbContext.SaveChangesAsync();
-
-            return recipient;
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, $"Error saving recipient {recipient.Name}");
+                throw;
+            }
         }
 
         public async Task<RemittanceTransaction> SendMoneyAsync(RemittanceTransaction transaction)
         {
-            _logger.LogInformation($"Processing money transfer of {transaction.Amount} {transaction.Currency} to {transaction.Recipient.Name}");
+            _logger.LogInformation($"Processing money transfer of {transaction.Amount} {transaction.Currency} to {transaction.Recipient?.Name ?? "unknown"}");
+
+            // Validate transaction data
+            if (transaction.Amount <= 0)
+            {
+                throw new ArgumentException("Amount must be greater than zero");
+            }
+
+            if (string.IsNullOrEmpty(transaction.Currency))
+            {
+                throw new ArgumentException("Currency is required");
+            }
+
+            if (string.IsNullOrEmpty(transaction.PaymentMethod))
+            {
+                throw new ArgumentException("Payment method is required");
+            }
+
+            if (transaction.Recipient == null)
+            {
+                throw new ArgumentException("Recipient information is required");
+            }
 
             // Generate ID if not provided
             if (string.IsNullOrEmpty(transaction.Id))
             {
                 transaction.Id = Guid.NewGuid().ToString();
+            }
+
+            // Handle recipient first - this is the part that's likely failing
+            if (transaction.Recipient != null)
+            {
+                try
+                {
+                    // Save the recipient and get a reference to the saved entity
+                    var savedRecipient = await SaveRecipientAsync(transaction.Recipient);
+                    // Replace the transaction's recipient reference with the saved one
+                    transaction.Recipient = savedRecipient;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Error saving recipient during transaction");
+                    throw;
+                }
             }
 
             // Calculate exchange rate if needed
@@ -145,26 +207,28 @@ namespace RemittanceAPI.Services
             // Set status to Processing (in a real app, this would involve payment processing)
             transaction.Status = TransactionStatus.Processing;
 
-            // Save the recipient if it's a new one
-            if (string.IsNullOrEmpty(transaction.Recipient.Id))
+            try
             {
-                transaction.Recipient = await SaveRecipientAsync(transaction.Recipient);
+                // Add to transaction history
+                await _dbContext.Transactions.AddAsync(transaction);
+                await _dbContext.SaveChangesAsync();
+
+                // Simulate processing delay
+                await Task.Delay(2000);
+
+                // Update status to Completed
+                transaction.Status = TransactionStatus.Completed;
+                transaction.CompletedAt = DateTime.UtcNow;
+
+                await _dbContext.SaveChangesAsync();
+
+                return transaction;
             }
-
-            // Add to transaction history
-            await _dbContext.Transactions.AddAsync(transaction);
-            await _dbContext.SaveChangesAsync();
-
-            // Simulate processing delay
-            await Task.Delay(2000);
-
-            // Update status to Completed
-            transaction.Status = TransactionStatus.Completed;
-            transaction.CompletedAt = DateTime.UtcNow;
-
-            await _dbContext.SaveChangesAsync();
-
-            return transaction;
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, $"Error processing transaction {transaction.Id}");
+                throw;
+            }
         }
 
         public async Task<IEnumerable<RemittanceTransaction>> GetTransactionHistoryAsync(string userId)

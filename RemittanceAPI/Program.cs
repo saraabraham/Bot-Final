@@ -17,15 +17,19 @@ builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
 // Add CORS
+// In Program.cs
+// Ensure CORS is configured properly
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowSpecificOrigin",
         builder => builder
-            .WithOrigins("http://localhost:4200") // Angular app URL
+            .WithOrigins("http://localhost:4200") // Your Angular app URL
             .AllowAnyMethod()
             .AllowAnyHeader()
             .AllowCredentials());
 });
+
+
 
 // Add JWT Authentication
 builder.Services.AddAuthentication(options =>

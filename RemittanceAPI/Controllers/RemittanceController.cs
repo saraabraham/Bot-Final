@@ -1,6 +1,9 @@
+using System;
+using System.Security.Claims;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Logging;
 using RemittanceAPI.Models;
 using RemittanceAPI.Services;
 
@@ -11,10 +14,14 @@ namespace RemittanceAPI.Controllers
     public class RemittanceController : ControllerBase
     {
         private readonly RemittanceService _remittanceService;
+        private readonly ILogger<RemittanceController> _logger;
 
-        public RemittanceController(RemittanceService remittanceService)
+        public RemittanceController(
+            RemittanceService remittanceService,
+            ILogger<RemittanceController> logger)
         {
             _remittanceService = remittanceService;
+            _logger = logger;
         }
 
         [HttpGet("rate")]
@@ -25,9 +32,16 @@ namespace RemittanceAPI.Controllers
                 return BadRequest(new { message = "Both 'from' and 'to' currencies are required" });
             }
 
-            var rate = await _remittanceService.GetExchangeRateAsync(from, to);
-
-            return Ok(rate);
+            try
+            {
+                var rate = await _remittanceService.GetExchangeRateAsync(from, to);
+                return Ok(rate);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, $"Error getting exchange rate from {from} to {to}");
+                return StatusCode(500, new { message = "An error occurred while getting exchange rate" });
+            }
         }
 
         [HttpGet("fees")]
@@ -43,20 +57,47 @@ namespace RemittanceAPI.Controllers
                 return BadRequest(new { message = "Currency and payment method are required" });
             }
 
-            var fees = await _remittanceService.CalculateFeesAsync(amount, currency, method);
-
-            return Ok(fees);
+            try
+            {
+                var fees = await _remittanceService.CalculateFeesAsync(amount, currency, method);
+                return Ok(fees);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, $"Error calculating fees for {amount} {currency} using {method}");
+                return StatusCode(500, new { message = "An error occurred while calculating fees" });
+            }
         }
 
         [Authorize]
         [HttpGet("recipients")]
         public async Task<IActionResult> GetSavedRecipients()
         {
-            string userId = User.FindFirst("sub")?.Value;
+            try
+            {
+                string userId = User.FindFirst("sub")?.Value;
+                _logger.LogInformation($"GetSavedRecipients - User ID from token: {userId}");
 
-            var recipients = await _remittanceService.GetSavedRecipientsAsync(userId);
+                if (string.IsNullOrEmpty(userId))
+                {
+                    // Try alternative claim types
+                    userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+                    _logger.LogInformation($"GetSavedRecipients - User ID from NameIdentifier: {userId}");
 
-            return Ok(recipients);
+                    if (string.IsNullOrEmpty(userId))
+                    {
+                        return BadRequest(new { message = "User ID not found in token" });
+                    }
+                }
+
+                var recipients = await _remittanceService.GetSavedRecipientsAsync(userId);
+                return Ok(recipients);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error retrieving saved recipients");
+                return StatusCode(500, new { message = "An error occurred while retrieving saved recipients", error = ex.Message });
+            }
         }
 
         [Authorize]
@@ -68,9 +109,16 @@ namespace RemittanceAPI.Controllers
                 return BadRequest(new { message = "Recipient data is required" });
             }
 
-            var savedRecipient = await _remittanceService.SaveRecipientAsync(recipient);
-
-            return CreatedAtAction(nameof(GetSavedRecipients), null, savedRecipient);
+            try
+            {
+                var savedRecipient = await _remittanceService.SaveRecipientAsync(recipient);
+                return CreatedAtAction(nameof(GetSavedRecipients), null, savedRecipient);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, $"Error saving recipient {recipient.Name}");
+                return StatusCode(500, new { message = $"An error occurred while saving recipient: {ex.Message}" });
+            }
         }
 
         [Authorize]
@@ -82,23 +130,85 @@ namespace RemittanceAPI.Controllers
                 return BadRequest(new { message = "Transaction data is required" });
             }
 
-            string userId = User.FindFirst("sub")?.Value;
-            transaction.SenderId = userId;
+            try
+            {
+                string userId = User.FindFirst("sub")?.Value;
+                if (string.IsNullOrEmpty(userId))
+                {
+                    // Try alternative claim types
+                    userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+                    _logger.LogInformation($"SendMoney - User ID from NameIdentifier: {userId}");
 
-            var result = await _remittanceService.SendMoneyAsync(transaction);
+                    if (string.IsNullOrEmpty(userId))
+                    {
+                        return BadRequest(new { message = "User ID not found in token" });
+                    }
+                }
 
-            return CreatedAtAction(nameof(GetTransactionStatus), new { id = result.Id }, result);
+                // Set the sender ID from the authenticated user
+                transaction.SenderId = userId;
+
+                // Log the incoming transaction data for debugging
+                _logger.LogInformation($"Received transaction: Amount={transaction.Amount}, " +
+                    $"Currency={transaction.Currency}, " +
+                    $"RecipientId={transaction.Recipient?.Id ?? "null"}, " +
+                    $"RecipientName={transaction.Recipient?.Name ?? "null"}, " +
+                    $"PaymentMethod={transaction.PaymentMethod}");
+
+                // Validate recipient
+                if (transaction.Recipient == null)
+                {
+                    return BadRequest(new { message = "Recipient information is required" });
+                }
+
+                // Always ensure we have a fresh ID for each transaction
+                transaction.Id = Guid.NewGuid().ToString();
+
+                // Make sure required fields are present
+                if (transaction.Amount <= 0)
+                {
+                    return BadRequest(new { message = "Amount must be greater than zero" });
+                }
+
+                if (string.IsNullOrEmpty(transaction.Currency))
+                {
+                    return BadRequest(new { message = "Currency is required" });
+                }
+
+                if (string.IsNullOrEmpty(transaction.PaymentMethod))
+                {
+                    return BadRequest(new { message = "Payment method is required" });
+                }
+
+                var result = await _remittanceService.SendMoneyAsync(transaction);
+                return CreatedAtAction(nameof(GetTransactionStatus), new { id = result.Id }, result);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error processing transaction");
+                return StatusCode(500, new { message = $"Error processing transaction: {ex.Message}" });
+            }
         }
-
         [Authorize]
         [HttpGet("history")]
         public async Task<IActionResult> GetTransactionHistory()
         {
-            string userId = User.FindFirst("sub")?.Value;
+            try
+            {
+                string userId = User.FindFirst("sub")?.Value;
+                if (string.IsNullOrEmpty(userId))
+                {
+                    return BadRequest(new { message = "User ID not found" });
+                }
 
-            var history = await _remittanceService.GetTransactionHistoryAsync(userId);
-
-            return Ok(history);
+                var history = await _remittanceService.GetTransactionHistoryAsync(userId);
+                return Ok(history);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error retrieving transaction history");
+                return StatusCode(500, new { message = "An error occurred while retrieving transaction history" });
+            }
         }
 
         [Authorize]
@@ -110,14 +220,21 @@ namespace RemittanceAPI.Controllers
                 return BadRequest(new { message = "Transaction ID is required" });
             }
 
-            var transaction = await _remittanceService.GetTransactionStatusAsync(id);
-
-            if (transaction == null)
+            try
             {
-                return NotFound(new { message = $"Transaction {id} not found" });
-            }
+                var transaction = await _remittanceService.GetTransactionStatusAsync(id);
+                if (transaction == null)
+                {
+                    return NotFound(new { message = $"Transaction {id} not found" });
+                }
 
-            return Ok(transaction);
+                return Ok(transaction);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, $"Error retrieving transaction status for {id}");
+                return StatusCode(500, new { message = "An error occurred while retrieving transaction status" });
+            }
         }
     }
 }
