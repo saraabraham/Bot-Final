@@ -1,9 +1,13 @@
-<!-- Update remittance-form.component.html -->
 <div class="remittance-form-container">
     <h2>Send Money</h2>
     <div *ngIf="errorMessage" class="alert alert-danger">
         <i class="fas fa-exclamation-circle"></i>
         {{ errorMessage }}
+    </div>
+
+    <div *ngIf="successMessage" class="alert alert-success">
+        <i class="fas fa-check-circle"></i>
+        {{ successMessage }}
     </div>
 
     <!-- Balance display -->
@@ -12,6 +16,7 @@
     </div>
 
     <form [formGroup]="remittanceForm" (ngSubmit)="onSubmit()">
+        <!-- Amount and Currency Section -->
         <div class="form-group">
             <label for="amount">Amount</label>
             <div class="input-group">
@@ -20,18 +25,13 @@
                     <option *ngFor="let currency of currencies" [value]="currency">{{currency}}</option>
                 </select>
             </div>
-            <div class="error-message" *ngIf="remittanceForm.get('amount')?.touched &&
-          (remittanceForm.get('amount')?.errors?.['required'] ||
-          remittanceForm.get('amount')?.value === null ||
-          remittanceForm.get('amount')?.value <= 0)">
+            <div class="error-message" *ngIf="remittanceForm.get('amount')?.touched && 
+                  (remittanceForm.get('amount')?.errors?.['required'] || 
+                   remittanceForm.get('amount')?.value === null || 
+                   remittanceForm.get('amount')?.value <= 0)">
                 Amount is required and must be greater than zero
             </div>
 
-            <!-- Success message for recipient creation -->
-            <div *ngIf="successMessage" class="alert alert-success">
-                <i class="fas fa-check-circle"></i>
-                {{ successMessage }}
-            </div>
             <!-- Balance warning -->
             <div class="warning-message" *ngIf="showBalanceWarning">
                 <i class="fas fa-exclamation-triangle"></i>
@@ -39,70 +39,85 @@
             </div>
         </div>
 
-        <div class="form-group recipient-section" *ngIf="!showAddRecipient">
-            <label for="recipient">Recipient</label>
-            <select id="recipient" formControlName="recipient">
-                <option value="" disabled selected>Select a recipient</option>
-                <option *ngFor="let recipient of recipients" [value]="recipient.id">
-                    {{recipient.name}} - {{recipient.country}}
-                </option>
-            </select>
-            <button type="button" (click)="toggleAddRecipient()" class="link-button">+ Add New Recipient</button>
-            <div class="error-message"
-                *ngIf="remittanceForm.get('recipient')?.touched && remittanceForm.get('recipient')?.errors?.['required']">
-                Please select a recipient
+        <!-- Recipient Section -->
+        <div class="recipient-section" *ngIf="!showAddRecipient">
+            <h3>Recipient Information</h3>
+            <div class="form-group">
+                <label for="recipient">Select Recipient</label>
+                <select id="recipient" formControlName="recipient">
+                    <option value="" disabled selected>Select a recipient</option>
+                    <option *ngFor="let recipient of recipients" [value]="recipient.id">
+                        {{recipient.name}} - {{recipient.country}}
+                    </option>
+                </select>
+                <div class="error-message"
+                    *ngIf="remittanceForm.get('recipient')?.touched && remittanceForm.get('recipient')?.errors?.['required']">
+                    Please select a recipient
+                </div>
+                <button type="button" (click)="toggleAddRecipient()" class="link-button">+ Add New Recipient</button>
             </div>
         </div>
 
+        <!-- New Recipient Section -->
         <div class="new-recipient-section" *ngIf="showAddRecipient" formGroupName="newRecipient">
             <h3>New Recipient</h3>
+
             <div class="form-group">
                 <label for="name">Name</label>
                 <input type="text" id="name" formControlName="name" placeholder="Recipient name">
-                <div class="error-message" *ngIf="remittanceForm.get('newRecipient')?.get('name')?.touched && 
-               remittanceForm.get('newRecipient')?.get('name')?.errors?.['required']">
+                <div class="error-message" *ngIf="remittanceForm.get('newRecipient')?.get('name')?.touched &&
+                     remittanceForm.get('newRecipient')?.get('name')?.errors?.['required']">
                     Recipient name is required
                 </div>
             </div>
+
             <div class="form-group">
                 <label for="accountNumber">Account Number</label>
                 <input type="text" id="accountNumber" formControlName="accountNumber" placeholder="Account number">
-                <div class="error-message" *ngIf="remittanceForm.get('newRecipient')?.get('accountNumber')?.touched && 
-               remittanceForm.get('newRecipient')?.get('accountNumber')?.errors?.['required']">
+                <div class="error-message" *ngIf="remittanceForm.get('newRecipient')?.get('accountNumber')?.touched &&
+                     remittanceForm.get('newRecipient')?.get('accountNumber')?.errors?.['required']">
                     Account number is required
                 </div>
             </div>
+
             <div class="form-group">
                 <label for="bankName">Bank Name</label>
                 <input type="text" id="bankName" formControlName="bankName" placeholder="Bank name">
-                <div class="error-message" *ngIf="remittanceForm.get('newRecipient')?.get('bankName')?.touched && 
-               remittanceForm.get('newRecipient')?.get('bankName')?.errors?.['required']">
+                <div class="error-message" *ngIf="remittanceForm.get('newRecipient')?.get('bankName')?.touched &&
+                     remittanceForm.get('newRecipient')?.get('bankName')?.errors?.['required']">
                     Bank name is required
                 </div>
             </div>
+
             <div class="form-group">
                 <label for="country">Country</label>
                 <input type="text" id="country" formControlName="country" placeholder="Country">
-                <div class="error-message" *ngIf="remittanceForm.get('newRecipient')?.get('country')?.touched && 
-               remittanceForm.get('newRecipient')?.get('country')?.errors?.['required']">
+                <div class="error-message" *ngIf="remittanceForm.get('newRecipient')?.get('country')?.touched &&
+                     remittanceForm.get('newRecipient')?.get('country')?.errors?.['required']">
                     Country is required
                 </div>
             </div>
-            <div class="form-group">
-                <label for="email">Email (Optional)</label>
-                <input type="email" id="email" formControlName="email" placeholder="Email address">
-                <div class="error-message" *ngIf="remittanceForm.get('newRecipient')?.get('email')?.touched && 
-               remittanceForm.get('newRecipient')?.get('email')?.errors?.['email']">
-                    Please enter a valid email address
+
+            <div class="form-row">
+                <div class="form-group half-width">
+                    <label for="email">Email (Optional)</label>
+                    <input type="email" id="email" formControlName="email" placeholder="Email address">
+                    <div class="error-message" *ngIf="remittanceForm.get('newRecipient')?.get('email')?.touched &&
+                       remittanceForm.get('newRecipient')?.get('email')?.errors?.['email']">
+                        Please enter a valid email address
+                    </div>
+                </div>
+
+                <div class="form-group half-width">
+                    <label for="phoneNumber">Phone Number (Optional)</label>
+                    <input type="text" id="phoneNumber" formControlName="phoneNumber" placeholder="Phone number">
                 </div>
             </div>
-            <div class="form-group">
-                <label for="phoneNumber">Phone Number (Optional)</label>
-                <input type="text" id="phoneNumber" formControlName="phoneNumber" placeholder="Phone number">
-            </div>
+
             <button type="button" (click)="toggleAddRecipient()" class="link-button">Use Existing Recipient</button>
         </div>
 
+        <!-- Payment Method Section -->
         <div class="form-group">
             <label for="paymentMethod">Payment Method</label>
             <select id="paymentMethod" formControlName="paymentMethod">
@@ -110,7 +125,8 @@
             </select>
         </div>
 
-        <div class="transaction-summary">
+        <!-- Transaction Summary Section -->
+        <div class="transaction-summary" [ngClass]="{'insufficient-balance': showBalanceWarning}">
             <h3>Transaction Summary</h3>
             <div class="summary-row">
                 <span>Amount:</span>
@@ -137,6 +153,7 @@
             </div>
         </div>
 
+        <!-- Action Buttons -->
         <div class="form-actions">
             <button type="button" (click)="cancel()" class="cancel-button">Cancel</button>
             <button type="submit" class="send-button"

@@ -12,6 +12,12 @@
         font-weight: 500;
     }
 
+    h3 {
+        margin-bottom: 1rem;
+        font-size: 1.1rem;
+        color: #444;
+    }
+
     .form-group {
         margin-bottom: 1.5rem;
 
@@ -62,33 +68,43 @@
         }
     }
 
-    .recipient-section,
-    .new-recipient-section {
-        margin-bottom: 2rem;
-        padding: 1.5rem;
-        background-color: #f9f9f9;
-        border-radius: 6px;
+    .form-row {
+        display: flex;
+        gap: 1rem;
+        margin-bottom: 1.5rem;
 
-        h3 {
-            margin-bottom: 1rem;
-            font-size: 1.1rem;
-            color: #444;
+        .half-width {
+            flex: 1;
+            margin-bottom: 0;
         }
+    }
 
-        .link-button {
-            background: none;
-            color: #0066cc;
-            padding: 0.5rem;
-            text-decoration: underline;
-            font-size: 0.9rem;
-            border: none;
-            cursor: pointer;
+    .balance-info {
+        background-color: #e9f7ef;
+        border-radius: 8px;
+        padding: 1rem;
+        margin-bottom: 1.5rem;
+        border: 1px solid #d5f5e3;
 
-            &:hover {
-                color: darken(#0066cc, 10%);
-                text-decoration: none;
+        .balance-amount {
+            font-size: 1.1rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+
+            span {
+                font-weight: bold;
+                color: #27ae60;
             }
         }
+    }
+
+    .recipient-section,
+    .new-recipient-section {
+        background-color: #f9f9f9;
+        border-radius: 6px;
+        padding: 1.5rem;
+        margin-bottom: 1.5rem;
     }
 
     .transaction-summary {
@@ -97,6 +113,11 @@
         border-radius: 8px;
         margin-bottom: 2rem;
         border: 1px solid #e3e9f2;
+
+        &.insufficient-balance {
+            border-color: #e74c3c;
+            background-color: #fdf2f0;
+        }
 
         h3 {
             margin-bottom: 1rem;
@@ -117,6 +138,35 @@
                 font-weight: bold;
                 font-size: 1.1rem;
             }
+        }
+    }
+
+    .warning-message {
+        color: #e67e22;
+        font-size: 0.9rem;
+        margin-top: 0.5rem;
+        display: flex;
+        align-items: center;
+
+        i {
+            margin-right: 0.5rem;
+        }
+    }
+
+    .link-button {
+        background: none;
+        color: #0066cc;
+        padding: 0.5rem;
+        text-decoration: underline;
+        font-size: 0.9rem;
+        border: none;
+        cursor: pointer;
+        margin-top: 0.5rem;
+        display: inline-block;
+
+        &:hover {
+            color: darken(#0066cc, 10%);
+            text-decoration: none;
         }
     }
 
@@ -163,21 +213,6 @@
     }
 }
 
-@media (max-width: 768px) {
-    .remittance-form-container {
-        padding: 1.5rem;
-
-        .form-actions {
-            flex-direction: column;
-
-            .cancel-button,
-            .send-button {
-                width: 100%;
-            }
-        }
-    }
-}
-
 .alert {
     padding: 0.75rem 1rem;
     margin-bottom: 1rem;
@@ -189,7 +224,37 @@
         border: 1px solid #f5c6cb;
     }
 
+    &.alert-success {
+        background-color: #d4edda;
+        color: #155724;
+        border: 1px solid #c3e6cb;
+    }
+
     i {
         margin-right: 0.5rem;
+    }
+}
+
+@media (max-width: 768px) {
+    .remittance-form-container {
+        padding: 1.5rem;
+
+        .form-row {
+            flex-direction: column;
+            gap: 0;
+
+            .half-width {
+                margin-bottom: 1.5rem;
+            }
+        }
+
+        .form-actions {
+            flex-direction: column;
+
+            .cancel-button,
+            .send-button {
+                width: 100%;
+            }
+        }
     }
 }
