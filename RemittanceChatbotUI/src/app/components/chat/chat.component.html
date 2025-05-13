@@ -13,6 +13,13 @@
             <div class="message-content">
                 <ng-container *ngIf="!message.isProcessing; else processingTemplate">
                     {{ message.text }}
+
+                    <!-- Add action buttons if available -->
+                    <div *ngIf="message.actions && message.actions.length > 0" class="message-actions">
+                        <button *ngFor="let action of message.actions" (click)="action.action()" class="action-button">
+                            {{ action.text }}
+                        </button>
+                    </div>
                 </ng-container>
                 <ng-template #processingTemplate>
                     <div class="typing-indicator">

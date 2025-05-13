@@ -1,4 +1,5 @@
-// src/app/components/remittance-form/remittance-form.component.ts
+// Fix for remittance-form.component.ts
+
 import { Component, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { ReactiveFormsModule, FormBuilder, FormGroup, Validators } from '@angular/forms';
@@ -7,9 +8,8 @@ import { RemittanceService } from '../../services/remittance.service';
 import { AuthService } from '../../services/auth.service';
 import { Recipient, RemittanceTransaction } from '../../models/remittance.model';
 import { forkJoin, lastValueFrom } from 'rxjs';
-import { catchError } from 'rxjs/operators'; // Add this import for catchError
-import { HttpErrorResponse } from '@angular/common/http'; // Add this for typed error handling
-
+import { catchError } from 'rxjs/operators';
+import { HttpErrorResponse } from '@angular/common/http';
 
 @Component({
     selector: 'app-remittance-form',
@@ -33,6 +33,12 @@ export class RemittanceFormComponent implements OnInit {
     exchangeRate = 1;
     fees = 0;
     totalAmount = 0;
+    errorMessage = '';
+    successMessage = '';
+    userBalance = 0;
+    userCurrency = 'USD';
+    showBalanceWarning = false;
+    preselectedRecipientId = '';
 
     constructor(
         private fb: FormBuilder,
@@ -61,11 +67,12 @@ export class RemittanceFormComponent implements OnInit {
 
         this.initForm();
         this.loadRecipients();
+        this.loadUserBalance();
 
         // Get query params if coming from chat
         this.route.queryParams.subscribe(params => {
             if (params['amount']) {
-                this.remittanceForm.get('amount')?.setValue(params['amount']);
+                this.remittanceForm.get('amount')?.setValue(parseFloat(params['amount']));
             }
             if (params['currency']) {
                 this.remittanceForm.get('currency')?.setValue(params['currency']);
@@ -74,6 +81,52 @@ export class RemittanceFormComponent implements OnInit {
                 // Will need to match by name once recipients are loaded
                 const recipientName = params['recipient'];
                 this.remittanceForm.get('recipientName')?.setValue(recipientName);
+            }
+            if (params['recipientId']) {
+                // Store the preselected recipient ID
+                this.preselectedRecipientId = params['recipientId'];
+                // Will be set after recipients are loaded
+            }
+
+            // Handle new recipient flag
+            if (params['newRecipient'] === 'true') {
+                // Show add recipient form immediately
+                this.showAddRecipient = true;
+
+                // We'll toggle validation after the component initializes
+                setTimeout(() => {
+                    // Don't call toggle directly to avoid toggling the UI state
+                    // Just apply the validations
+                    if (this.showAddRecipient) {
+                        // Remove validation from recipient dropdown
+                        this.remittanceForm.get('recipient')?.clearValidators();
+                        this.remittanceForm.get('recipient')?.setValue('');
+                        this.remittanceForm.get('recipient')?.updateValueAndValidity();
+
+                        // Add validation to new recipient fields
+                        const newRecipientGroup = this.remittanceForm.get('newRecipient') as FormGroup;
+                        newRecipientGroup.get('name')?.setValidators(Validators.required);
+                        newRecipientGroup.get('accountNumber')?.setValidators(Validators.required);
+                        newRecipientGroup.get('bankName')?.setValidators(Validators.required);
+                        newRecipientGroup.get('country')?.setValidators(Validators.required);
+
+                        // Pre-fill the name if available
+                        if (params['recipient']) {
+                            newRecipientGroup.get('name')?.setValue(params['recipient']);
+                        }
+
+                        // Update validity
+                        Object.keys(newRecipientGroup.controls).forEach(key => {
+                            newRecipientGroup.get(key)?.updateValueAndValidity();
+                        });
+                    }
+                }, 0);
+            }
+
+            // Handle complete recipient flag
+            if (params['completeRecipient'] === 'true' && params['recipientId']) {
+                // We'll need to load the recipient data and show in edit mode
+                this.loadRecipientForEdit(params['recipientId']);
             }
         });
 
@@ -88,6 +141,113 @@ export class RemittanceFormComponent implements OnInit {
 
         this.remittanceForm.get('paymentMethod')?.valueChanges.subscribe(val => {
             this.updateCalculations();
+        });
+    }
+
+    // Add method to load a recipient for editing
+    private loadRecipientForEdit(recipientId: string): void {
+        // Find the recipient in already loaded recipients list
+        const recipient = this.recipients.find(r => r.id === recipientId);
+
+        if (recipient) {
+            // Show add recipient mode
+            this.showAddRecipient = true;
+
+            // Set up validations and fill the form
+            setTimeout(() => {
+                // Remove validation from recipient dropdown
+                this.remittanceForm.get('recipient')?.clearValidators();
+                this.remittanceForm.get('recipient')?.setValue('');
+                this.remittanceForm.get('recipient')?.updateValueAndValidity();
+
+                // Add validation to new recipient fields
+                const newRecipientGroup = this.remittanceForm.get('newRecipient') as FormGroup;
+                newRecipientGroup.get('name')?.setValidators(Validators.required);
+                newRecipientGroup.get('accountNumber')?.setValidators(Validators.required);
+                newRecipientGroup.get('bankName')?.setValidators(Validators.required);
+                newRecipientGroup.get('country')?.setValidators(Validators.required);
+
+                // Pre-fill all fields
+                newRecipientGroup.patchValue({
+                    name: recipient.name,
+                    accountNumber: recipient.accountNumber || '',
+                    bankName: recipient.bankName || '',
+                    country: recipient.country || '',
+                    email: recipient.email || '',
+                    phoneNumber: recipient.phoneNumber || ''
+                });
+
+                // Update validity
+                Object.keys(newRecipientGroup.controls).forEach(key => {
+                    newRecipientGroup.get(key)?.updateValueAndValidity();
+                });
+            }, 0);
+        } else {
+            // If not found in loaded recipients, make a separate request
+            this.remittanceService.getSavedRecipients().subscribe({
+                next: (recipients) => {
+                    const recipient = recipients.find(r => r.id === recipientId);
+                    if (recipient) {
+                        // Update the recipients list
+                        this.recipients = recipients;
+
+                        // Show add recipient mode
+                        this.showAddRecipient = true;
+
+                        // Set up validations and fill the form
+                        const newRecipientGroup = this.remittanceForm.get('newRecipient') as FormGroup;
+
+                        // Remove validation from recipient dropdown
+                        this.remittanceForm.get('recipient')?.clearValidators();
+                        this.remittanceForm.get('recipient')?.setValue('');
+                        this.remittanceForm.get('recipient')?.updateValueAndValidity();
+
+                        // Add validation to new recipient fields
+                        newRecipientGroup.get('name')?.setValidators(Validators.required);
+                        newRecipientGroup.get('accountNumber')?.setValidators(Validators.required);
+                        newRecipientGroup.get('bankName')?.setValidators(Validators.required);
+                        newRecipientGroup.get('country')?.setValidators(Validators.required);
+
+                        // Pre-fill all fields
+                        newRecipientGroup.patchValue({
+                            name: recipient.name,
+                            accountNumber: recipient.accountNumber || '',
+                            bankName: recipient.bankName || '',
+                            country: recipient.country || '',
+                            email: recipient.email || '',
+                            phoneNumber: recipient.phoneNumber || ''
+                        });
+
+                        // Update validity
+                        Object.keys(newRecipientGroup.controls).forEach(key => {
+                            newRecipientGroup.get(key)?.updateValueAndValidity();
+                        });
+                    } else {
+                        // If still not found, handle the error
+                        this.errorMessage = 'Could not find the recipient to edit. Please try again.';
+                    }
+                },
+                error: (error) => {
+                    console.error('Error loading recipient for edit:', error);
+                    this.errorMessage = 'Error loading recipient details. Please try again.';
+                }
+            });
+        }
+    }
+
+    private loadUserBalance(): void {
+        this.remittanceService.getUserBalance().subscribe({
+            next: (balance) => {
+                this.userBalance = balance.balance;
+                this.userCurrency = balance.currency;
+
+                // After loading balance, update calculations to check for sufficient funds
+                this.updateCalculations();
+            },
+            error: (error) => {
+                console.error('Error loading user balance:', error);
+                this.errorMessage = 'Unable to load your account balance. Some features may be limited.';
+            }
         });
     }
 
@@ -122,7 +282,19 @@ export class RemittanceFormComponent implements OnInit {
                         r.name.toLowerCase() === recipientName.toLowerCase());
                     if (foundRecipient) {
                         this.remittanceForm.get('recipient')?.setValue(foundRecipient.id);
+                    } else {
+                        // If recipient not found, show the add recipient form
+                        this.showAddRecipient = true;
+                        // Pre-fill the name
+                        const newRecipientGroup = this.remittanceForm.get('newRecipient') as FormGroup;
+                        newRecipientGroup.get('name')?.setValue(recipientName);
+                        this.toggleAddRecipient(); // Enable validation
                     }
+                }
+
+                // Check if we have a preselected recipient ID
+                if (this.preselectedRecipientId) {
+                    this.remittanceForm.get('recipient')?.setValue(this.preselectedRecipientId);
                 }
             },
             error: (error) => {
@@ -133,6 +305,7 @@ export class RemittanceFormComponent implements OnInit {
             }
         });
     }
+
     private initForm(): void {
         // Create form without nested group first
         this.remittanceForm = this.fb.group({
@@ -155,7 +328,6 @@ export class RemittanceFormComponent implements OnInit {
 
         // Add the group to the form
         this.remittanceForm.addControl('newRecipient', newRecipientGroup);
-
     }
 
     toggleAddRecipient(): void {
@@ -229,6 +401,7 @@ export class RemittanceFormComponent implements OnInit {
         if (amount === null || amount === undefined || amount <= 0) {
             this.fees = 0;
             this.totalAmount = 0;
+            this.showBalanceWarning = false;
             return;
         }
 
@@ -240,14 +413,28 @@ export class RemittanceFormComponent implements OnInit {
                 this.exchangeRate = result.exchangeRate.rate;
                 this.fees = result.fees.fees;
                 this.totalAmount = amount + this.fees;
+
+                // Check if user has sufficient balance
+                if (this.userBalance > 0) {
+                    // Convert transaction total to user's currency if needed
+                    let totalInUserCurrency = this.totalAmount;
+
+                    if (currency !== this.userCurrency) {
+                        // We need to convert the amount to user's currency
+                        // For simplicity, using the exchange rate we already have
+                        // In a real app, we would get the correct exchange rate between transaction currency and user currency
+                        totalInUserCurrency = this.totalAmount * (this.userCurrency === 'USD' ? 1 / this.exchangeRate : this.exchangeRate);
+                    }
+
+                    // Show warning if insufficient balance
+                    this.showBalanceWarning = totalInUserCurrency > this.userBalance;
+                }
             },
             error: (error) => {
                 console.error('Error calculating transaction details:', error);
             }
         });
     }
-
-
 
     async onSubmit(): Promise<void> {
         // First, verify that the user is still authenticated
@@ -269,12 +456,18 @@ export class RemittanceFormComponent implements OnInit {
             return;
         }
 
+        // Check if user has sufficient balance
+        if (this.showBalanceWarning) {
+            this.errorMessage = `Insufficient balance. Your current balance is ${this.userBalance} ${this.userCurrency}.`;
+            return;
+        }
+
         this.submitting = true;
         this.errorMessage = ''; // Clear any previous error message
 
         try {
             // Determine if we're using an existing recipient or creating a new one
-            let recipient;
+            let recipient: Recipient;
 
             if (this.showAddRecipient) {
                 // Create new recipient from form data
@@ -298,7 +491,6 @@ export class RemittanceFormComponent implements OnInit {
                 }
                 recipient = existingRecipient;
             }
-
 
             // Create the transaction data object
             const transactionData: RemittanceTransaction = {
@@ -338,9 +530,31 @@ export class RemittanceFormComponent implements OnInit {
 
             this.submitting = false;
 
-            // Navigate to confirmation page if we have an ID
-            if (result && result.id) {
-                this.router.navigate(['/transaction-confirmation', result.id]);
+            // Update user balance after successful transaction
+            this.loadUserBalance();
+
+            // Store the transaction ID outside the closure for use in the setTimeout
+            const transactionId = result?.id;
+
+            // Check if we have a valid transaction ID
+            if (transactionId) {
+                // If this was a new or edited recipient, show a success message first
+                if (this.showAddRecipient) {
+                    // This was a new or edited recipient
+                    const recipientName = this.remittanceForm.get('newRecipient')?.get('name')?.value;
+
+                    // Show a success message
+                    this.successMessage = `Successfully saved recipient "${recipientName}" and completed the transaction.`;
+
+                    // Then navigate after a short delay
+                    setTimeout(() => {
+                        this.successMessage = '';
+                        this.router.navigate(['/transaction-confirmation', transactionId]);
+                    }, 2000);
+                } else {
+                    // Normal flow - navigate immediately
+                    this.router.navigate(['/transaction-confirmation', transactionId]);
+                }
             } else {
                 console.error('Transaction completed but no ID was returned:', result);
                 this.errorMessage = 'Transaction completed but confirmation details could not be displayed';
@@ -353,9 +567,6 @@ export class RemittanceFormComponent implements OnInit {
             this.submitting = false;
         }
     }
-
-    // Add errorMessage property to your component class
-    errorMessage: string = '';
 
     cancel(): void {
         this.router.navigate(['/']);

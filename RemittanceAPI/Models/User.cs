@@ -10,6 +10,8 @@ namespace RemittanceAPI.Models
         public string Email { get; set; }
         public string PasswordHash { get; set; }
         public string? Phone { get; set; }
+        public decimal Balance { get; set; } = 1000.0m; // Default starting balance
+
 
         // Make sure this property exists for storing recipient IDs
         public List<string> SavedRecipients { get; set; } = new List<string>();

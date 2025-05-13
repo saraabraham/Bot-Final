@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using RemittanceAPI.Data;
@@ -12,9 +13,11 @@ using RemittanceAPI.Data;
 namespace RemittanceAPI.Migrations
 {
     [DbContext(typeof(RemittanceDbContext))]
-    partial class RemittanceDbContextModelSnapshot : ModelSnapshot
+    [Migration("20250513075258_AddedBalanceColumn")]
+    partial class AddedBalanceColumn
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder

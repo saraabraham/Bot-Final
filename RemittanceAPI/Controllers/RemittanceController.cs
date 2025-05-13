@@ -236,5 +236,69 @@ namespace RemittanceAPI.Controllers
                 return StatusCode(500, new { message = "An error occurred while retrieving transaction status" });
             }
         }
+
+        // Add these endpoints to the RemittanceController.cs
+
+        // Add this endpoint to check balance
+        [Authorize]
+        [HttpGet("balance")]
+        public async Task<IActionResult> GetUserBalance()
+        {
+            try
+            {
+                string userId = User.FindFirst("sub")?.Value;
+                if (string.IsNullOrEmpty(userId))
+                {
+                    userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+                    _logger.LogInformation($"GetUserBalance - User ID from NameIdentifier: {userId}");
+
+                    if (string.IsNullOrEmpty(userId))
+                    {
+                        return BadRequest(new { message = "User ID not found in token" });
+                    }
+                }
+
+                var balance = await _remittanceService.CheckUserBalanceAsync(userId);
+                return Ok(balance);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error retrieving user balance");
+                return StatusCode(500, new { message = "An error occurred while retrieving user balance", error = ex.Message });
+            }
+        }
+
+        // Add this endpoint to find or create a recipient
+        [Authorize]
+        [HttpPost("recipients/find-or-create")]
+        public async Task<IActionResult> FindOrCreateRecipient([FromBody] FindRecipientRequest request)
+        {
+            if (string.IsNullOrEmpty(request.Name))
+            {
+                return BadRequest(new { message = "Recipient name is required" });
+            }
+
+            try
+            {
+                string userId = User.FindFirst("sub")?.Value;
+                if (string.IsNullOrEmpty(userId))
+                {
+                    userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+
+                    if (string.IsNullOrEmpty(userId))
+                    {
+                        return BadRequest(new { message = "User ID not found in token" });
+                    }
+                }
+
+                var recipient = await _remittanceService.FindOrCreateRecipientAsync(request.Name, userId);
+                return Ok(recipient);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, $"Error finding or creating recipient {request.Name}");
+                return StatusCode(500, new { message = $"An error occurred: {ex.Message}" });
+            }
+        }
     }
 }

@@ -1,10 +1,17 @@
-// In src/app/services/remittance.service.ts
+// Update the remittance.service.ts
+
 import { Injectable } from '@angular/core';
 import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { Observable, throwError } from 'rxjs';
 import { catchError, tap } from 'rxjs/operators';
 import { RemittanceTransaction, Recipient } from '../models/remittance.model';
 import { environment } from '../../environments/environment';
+
+// Add this interface
+export interface UserBalance {
+    balance: number;
+    currency: string;
+}
 
 @Injectable({
     providedIn: 'root'
@@ -33,6 +40,24 @@ export class RemittanceService {
 
         // Return an observable with a user-facing error message
         return throwError(() => new Error(errorMessage));
+    }
+
+    // Add method to check user balance
+    getUserBalance(): Observable<UserBalance> {
+        return this.http.get<UserBalance>(`${this.apiUrl}/balance`)
+            .pipe(
+                tap(balance => console.log('Balance received:', balance)),
+                catchError(this.handleError)
+            );
+    }
+
+    // Add method to find or create a recipient
+    findOrCreateRecipient(name: string): Observable<Recipient> {
+        return this.http.post<Recipient>(`${this.apiUrl}/recipients/find-or-create`, { name })
+            .pipe(
+                tap(recipient => console.log('Recipient found or created:', recipient)),
+                catchError(this.handleError)
+            );
     }
 
     getExchangeRate(fromCurrency: string, toCurrency: string): Observable<{ rate: number }> {
@@ -68,7 +93,6 @@ export class RemittanceService {
             );
     }
 
-    // In src/app/services/remittance.service.ts
     sendMoney(transaction: RemittanceTransaction): Observable<RemittanceTransaction> {
         console.log('Sending transaction:', transaction);
         // Validate transaction data before sending to the server
@@ -108,6 +132,7 @@ export class RemittanceService {
                 catchError(this.handleError)
             );
     }
+
     getTransactionHistory(): Observable<RemittanceTransaction[]> {
         return this.http.get<RemittanceTransaction[]>(`${this.apiUrl}/history`)
             .pipe(catchError(this.handleError));

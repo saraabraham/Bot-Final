@@ -1,3 +1,5 @@
+// Update voice-recognition.service.ts
+
 import { Injectable, PLATFORM_ID, Inject } from '@angular/core';
 import { isPlatformBrowser } from '@angular/common';
 import { BehaviorSubject } from 'rxjs';
@@ -37,6 +39,13 @@ export class VoiceRecognitionService {
     private audioChunks: BlobPart[] = [];
     private isBrowser: boolean;
 
+    // Add list of finance-related keywords to improve recognition accuracy
+    private financeKeywords = [
+        'send', 'transfer', 'remit', 'money', 'dollars', 'euros', 'pounds',
+        'balance', 'recipient', 'account', 'bank', 'currency',
+        'USD', 'EUR', 'GBP', 'rate', 'exchange', 'fee'
+    ];
+
     constructor(@Inject(PLATFORM_ID) private platformId: Object) {
         this.isBrowser = isPlatformBrowser(this.platformId);
         // Only initialize recognition in browser environment
@@ -62,12 +71,39 @@ export class VoiceRecognitionService {
         this.recognition.continuous = false;
         this.recognition.interimResults = true;
 
+        // Add language model settings if available on the browser
+        try {
+            if ((this.recognition as any).lang !== undefined) {
+                (this.recognition as any).lang = 'en-US';
+            }
+
+            // Some browsers support grammars for better recognition
+            if ('SpeechGrammarList' in window || ('webkitSpeechGrammarList' in window)) {
+                const SpeechGrammarList = (window as any).SpeechGrammarList ||
+                    (window as any).webkitSpeechGrammarList;
+
+                const grammarList = new SpeechGrammarList();
+
+                // Create a simple grammar for finance-related commands
+                // Format: 'send $AMOUNT to $NAME', 'check balance', etc.
+                const grammar = `#JSGF V1.0; grammar finance; public <command> = send <amount> (dollars | euros | pounds) to <n> | check (balance | rates);`;
+
+                grammarList.addFromString(grammar, 1);
+                this.recognition.grammars = grammarList;
+            }
+        } catch (e) {
+            console.warn('Advanced speech recognition features not supported', e);
+        }
+
         this.recognition.onresult = (event: SpeechRecognitionEvent) => {
             const current = event.resultIndex;
             const currentTranscript = event.results[current][0].transcript;
 
+            // Check if this is one of our finance keywords for better accuracy
+            const normalized = this.normalizeTranscript(currentTranscript);
+
             if (event.results[current].isFinal) {
-                this.transcript.next(currentTranscript);
+                this.transcript.next(normalized);
             }
         };
 
@@ -79,6 +115,71 @@ export class VoiceRecognitionService {
         this.recognition.onend = () => {
             this.isListening.next(false);
         };
+    }
+
+    // Helper to normalize transcript and improve money transfer command recognition
+    private normalizeTranscript(text: string): string {
+        // Common speech recognition issues with finance terms
+        const corrections: { [key: string]: string } = {
+            'center': 'send',
+            'scent': 'send',
+            'sent': 'send',
+            'saint': 'send',
+            'dolors': 'dollars',
+            'dollar': 'dollars',
+            'euro': 'euros',
+            'pound': 'pounds',
+            'balanced': 'balance',
+            'check my bounds': 'check my balance',
+            'recipience': 'recipient',
+            'recipients': 'recipient'
+        };
+
+        // Apply corrections
+        let normalized = text.toLowerCase();
+
+        Object.keys(corrections).forEach(incorrect => {
+            const regex = new RegExp(`\\b${incorrect}\\b`, 'gi');
+            normalized = normalized.replace(regex, corrections[incorrect]);
+        });
+
+        // Fix amounts: "one hundred" -> "100", "five hundred" -> "500", etc.
+        const numberWords: { [key: string]: string } = {
+            'one': '1', 'two': '2', 'three': '3', 'four': '4', 'five': '5',
+            'six': '6', 'seven': '7', 'eight': '8', 'nine': '9', 'ten': '10',
+            'twenty': '20', 'thirty': '30', 'forty': '40', 'fifty': '50',
+            'sixty': '60', 'seventy': '70', 'eighty': '80', 'ninety': '90',
+            'hundred': '00', 'thousand': '000'
+        };
+
+        // Replace number words with digits in specific patterns
+        Object.keys(numberWords).forEach(word => {
+            // Only replace if followed by "dollars", "euros", etc.
+            const regex = new RegExp(`\\b${word}\\s+(dollars|euros|pounds)\\b`, 'gi');
+            normalized = normalized.replace(regex, `${numberWords[word]} $1`);
+
+            // Handle compound numbers like "one hundred", "five hundred"
+            if (word === 'hundred' || word === 'thousand') {
+                Object.keys(numberWords).forEach(digit => {
+                    if (digit !== 'hundred' && digit !== 'thousand') {
+                        const compoundRegex = new RegExp(`\\b${digit}\\s+${word}\\b`, 'gi');
+                        const replacement = word === 'hundred'
+                            ? `${numberWords[digit]}00`
+                            : `${numberWords[digit]}000`;
+                        normalized = normalized.replace(compoundRegex, replacement);
+                    }
+                });
+            }
+        });
+
+        // Look for "send money to [name]" patterns
+        const sendMoneyMatch = normalized.match(/send\s+money\s+to\s+(\w+)/i);
+        if (sendMoneyMatch) {
+            // Default to $100 if no amount specified
+            normalized = `send 100 dollars to ${sendMoneyMatch[1]}`;
+        }
+
+        return normalized;
     }
 
     start(): void {

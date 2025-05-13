@@ -13,14 +13,18 @@ namespace RemittanceAPI.Services
     {
         private readonly ILogger<RemittanceService> _logger;
         private readonly RemittanceDbContext _dbContext;
+        private readonly AuthService _authService;
         private readonly Dictionary<string, decimal> _exchangeRates;
 
         public RemittanceService(
             ILogger<RemittanceService> logger,
-            RemittanceDbContext dbContext)
+            RemittanceDbContext dbContext,
+            AuthService authService
+            )
         {
             _logger = logger;
             _dbContext = dbContext;
+            _authService = authService;
 
             // Mock exchange rates
             _exchangeRates = new Dictionary<string, decimal>
@@ -31,6 +35,24 @@ namespace RemittanceAPI.Services
                 { "EURGBP", 0.86m },
                 { "GBPUSD", 1.37m },
                 { "GBPEUR", 1.16m }
+            };
+        }
+
+        //Method to check user balance
+        public async Task<UserBalanceResponse> CheckUserBalanceAsync(string userId)
+        {
+            _logger.LogInformation($"Checking balance for user {userId}");
+
+            var user = await _dbContext.Users.FirstOrDefaultAsync(u => u.Id == userId);
+            if (user == null)
+            {
+                throw new ArgumentException("User not found");
+            }
+
+            return new UserBalanceResponse
+            {
+                Balance = user.Balance,
+                Currency = user.PreferredCurrency
             };
         }
 
@@ -164,13 +186,44 @@ namespace RemittanceAPI.Services
                 throw new ArgumentException("Recipient information is required");
             }
 
+            var user = await _dbContext.Users.FirstOrDefaultAsync(u => u.Id == transaction.SenderId);
+            if (user == null)
+            {
+                throw new ArgumentException($"User with ID {transaction.SenderId} not found");
+            }
+
+            // Calculate fees if needed
+            if (transaction.Fees == null)
+            {
+                var feeResponse = await CalculateFeesAsync(transaction.Amount, transaction.Currency, transaction.PaymentMethod);
+                transaction.Fees = feeResponse.Fees;
+            }
+
+            // Calculate total amount
+            transaction.TotalAmount = transaction.Amount + transaction.Fees;
+
+            // Convert if currencies don't match
+            decimal totalInUserCurrency = transaction.TotalAmount ?? 0m;
+            if (transaction.Currency != user.PreferredCurrency)
+            {
+                var rate = await GetExchangeRateAsync(transaction.Currency, user.PreferredCurrency);
+                totalInUserCurrency = ((decimal)(transaction.TotalAmount ?? 0m)) * rate.Rate;
+            }
+
+            // Check if user has sufficient balance
+            if (user.Balance < totalInUserCurrency)
+            {
+                throw new InvalidOperationException($"Insufficient balance. You have {user.Balance} {user.PreferredCurrency} but need {totalInUserCurrency} {user.PreferredCurrency}");
+            }
+
+
             // Generate ID if not provided
             if (string.IsNullOrEmpty(transaction.Id))
             {
                 transaction.Id = Guid.NewGuid().ToString();
             }
 
-            // Handle recipient first - this is the part that's likely failing
+            // Handle recipient first
             if (transaction.Recipient != null)
             {
                 try
@@ -194,15 +247,9 @@ namespace RemittanceAPI.Services
                 transaction.ExchangeRate = rateResponse.Rate;
             }
 
-            // Calculate fees if needed
-            if (transaction.Fees == null)
-            {
-                var feeResponse = await CalculateFeesAsync(transaction.Amount, transaction.Currency, transaction.PaymentMethod);
-                transaction.Fees = feeResponse.Fees;
-            }
-
-            // Calculate total amount
-            transaction.TotalAmount = transaction.Amount + transaction.Fees;
+            // Deduct from user's balance
+            user.Balance -= totalInUserCurrency;
+            _dbContext.Users.Update(user);
 
             // Set status to Processing (in a real app, this would involve payment processing)
             transaction.Status = TransactionStatus.Processing;
@@ -230,6 +277,58 @@ namespace RemittanceAPI.Services
                 throw;
             }
         }
+        // Add method to find recipient by name or create a new one
+        public async Task<Recipient> FindOrCreateRecipientAsync(string name, string userId)
+        {
+            _logger.LogInformation($"Finding or creating recipient with name {name} for user {userId}");
+
+            // Look for an existing recipient with this name
+            var user = await _dbContext.Users.FirstOrDefaultAsync(u => u.Id == userId);
+            if (user == null)
+            {
+                throw new ArgumentException($"User with ID {userId} not found");
+            }
+
+            // Try to find among user's saved recipients
+            if (user.SavedRecipients != null && user.SavedRecipients.Count > 0)
+            {
+                var recipients = await _dbContext.Recipients
+                    .Where(r => user.SavedRecipients.Contains(r.Id))
+                    .ToListAsync();
+
+                var existingRecipient = recipients.FirstOrDefault(r =>
+                    r.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
+
+                if (existingRecipient != null)
+                {
+                    _logger.LogInformation($"Found existing recipient: {existingRecipient.Id}");
+                    return existingRecipient;
+                }
+            }
+
+            // Create a new recipient with minimal info - will need to be completed later
+            var newRecipient = new Recipient
+            {
+                Id = Guid.NewGuid().ToString(),
+                Name = name,
+                Country = "Unknown" // Default value
+            };
+
+            await _dbContext.Recipients.AddAsync(newRecipient);
+
+            // Add to user's saved recipients
+            if (user.SavedRecipients == null)
+            {
+                user.SavedRecipients = new List<string>();
+            }
+            user.SavedRecipients.Add(newRecipient.Id);
+
+            await _dbContext.SaveChangesAsync();
+            _logger.LogInformation($"Created new recipient: {newRecipient.Id}");
+
+            return newRecipient;
+        }
+
 
         public async Task<IEnumerable<RemittanceTransaction>> GetTransactionHistoryAsync(string userId)
         {

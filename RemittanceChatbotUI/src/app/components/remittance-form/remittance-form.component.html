@@ -1,4 +1,4 @@
-<!-- src/app/components/remittance-form/remittance-form.component.html -->
+<!-- Update remittance-form.component.html -->
 <div class="remittance-form-container">
     <h2>Send Money</h2>
     <div *ngIf="errorMessage" class="alert alert-danger">
@@ -6,8 +6,11 @@
         {{ errorMessage }}
     </div>
 
+    <!-- Balance display -->
+    <div class="balance-info">
+        <div class="balance-amount">Available Balance: <span>{{ userBalance | currency:userCurrency }}</span></div>
+    </div>
 
-    <!-- Missing [formGroup] attribute on the form element -->
     <form [formGroup]="remittanceForm" (ngSubmit)="onSubmit()">
         <div class="form-group">
             <label for="amount">Amount</label>
@@ -17,11 +20,22 @@
                     <option *ngFor="let currency of currencies" [value]="currency">{{currency}}</option>
                 </select>
             </div>
-            <div class="error-message" *ngIf="remittanceForm.get('amount')?.touched && 
-                  (remittanceForm.get('amount')?.errors?.['required'] || 
-                   remittanceForm.get('amount')?.value === null || 
-                   remittanceForm.get('amount')?.value <= 0)">
+            <div class="error-message" *ngIf="remittanceForm.get('amount')?.touched &&
+          (remittanceForm.get('amount')?.errors?.['required'] ||
+          remittanceForm.get('amount')?.value === null ||
+          remittanceForm.get('amount')?.value <= 0)">
                 Amount is required and must be greater than zero
+            </div>
+
+            <!-- Success message for recipient creation -->
+            <div *ngIf="successMessage" class="alert alert-success">
+                <i class="fas fa-check-circle"></i>
+                {{ successMessage }}
+            </div>
+            <!-- Balance warning -->
+            <div class="warning-message" *ngIf="showBalanceWarning">
+                <i class="fas fa-exclamation-triangle"></i>
+                Insufficient balance to complete this transfer
             </div>
         </div>
 
@@ -45,22 +59,42 @@
             <div class="form-group">
                 <label for="name">Name</label>
                 <input type="text" id="name" formControlName="name" placeholder="Recipient name">
+                <div class="error-message" *ngIf="remittanceForm.get('newRecipient')?.get('name')?.touched && 
+               remittanceForm.get('newRecipient')?.get('name')?.errors?.['required']">
+                    Recipient name is required
+                </div>
             </div>
             <div class="form-group">
                 <label for="accountNumber">Account Number</label>
                 <input type="text" id="accountNumber" formControlName="accountNumber" placeholder="Account number">
+                <div class="error-message" *ngIf="remittanceForm.get('newRecipient')?.get('accountNumber')?.touched && 
+               remittanceForm.get('newRecipient')?.get('accountNumber')?.errors?.['required']">
+                    Account number is required
+                </div>
             </div>
             <div class="form-group">
                 <label for="bankName">Bank Name</label>
                 <input type="text" id="bankName" formControlName="bankName" placeholder="Bank name">
+                <div class="error-message" *ngIf="remittanceForm.get('newRecipient')?.get('bankName')?.touched && 
+               remittanceForm.get('newRecipient')?.get('bankName')?.errors?.['required']">
+                    Bank name is required
+                </div>
             </div>
             <div class="form-group">
                 <label for="country">Country</label>
                 <input type="text" id="country" formControlName="country" placeholder="Country">
+                <div class="error-message" *ngIf="remittanceForm.get('newRecipient')?.get('country')?.touched && 
+               remittanceForm.get('newRecipient')?.get('country')?.errors?.['required']">
+                    Country is required
+                </div>
             </div>
             <div class="form-group">
                 <label for="email">Email (Optional)</label>
                 <input type="email" id="email" formControlName="email" placeholder="Email address">
+                <div class="error-message" *ngIf="remittanceForm.get('newRecipient')?.get('email')?.touched && 
+               remittanceForm.get('newRecipient')?.get('email')?.errors?.['email']">
+                    Please enter a valid email address
+                </div>
             </div>
             <div class="form-group">
                 <label for="phoneNumber">Phone Number (Optional)</label>
@@ -95,11 +129,18 @@
                 <span>Total Amount:</span>
                 <span>{{totalAmount | currency:(remittanceForm.get('currency')?.value || 'USD')}}</span>
             </div>
+
+            <!-- Balance after transfer -->
+            <div class="summary-row" *ngIf="userBalance > 0 && !showBalanceWarning">
+                <span>Balance After Transfer:</span>
+                <span>{{ (userBalance - totalAmount) | currency:userCurrency }}</span>
+            </div>
         </div>
 
         <div class="form-actions">
             <button type="button" (click)="cancel()" class="cancel-button">Cancel</button>
-            <button type="submit" class="send-button" [disabled]="submitting || remittanceForm.invalid">
+            <button type="submit" class="send-button"
+                [disabled]="submitting || remittanceForm.invalid || showBalanceWarning">
                 <span *ngIf="!submitting">Send Money</span>
                 <span *ngIf="submitting">Processing...</span>
             </button>
