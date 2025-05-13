@@ -141,75 +141,243 @@ export class ChatComponent implements OnInit, OnDestroy, AfterViewChecked {
         } catch (err) { }
     }
 
+    // Update this part of sendMessage() method in chat.component.ts
+    // Update the sendMessage method in ChatComponent to handle conversation state
+
     sendMessage(): void {
         if (!this.newMessage.trim()) return;
 
         const message = this.newMessage;
         this.newMessage = '';
 
-        // Process message locally first to check for intents
-        const sendMoneyMatch = message.match(/(?:send|transfer|remit)\s+(?:(?:\$?\s*)?(\d+(?:\.\d+)?))?(?:\s*dollars|\s*euro|\s*pound|\s*usd|\s*eur|\s*gbp)?\s+(?:to\s+)(\w+)/i);
-        const depositMatch = message.match(/(deposit|add\s+money|top\s+up)\s+(?:(?:\$?\s*)?(\d+(?:\.\d+)?))?(?:\s*dollars|\s*euro|\s*pound|\s*usd|\s*eur|\s*gbp)?/i);
+        // Add user message to chat
+        const userMessageId = Math.random().toString(36).substring(7);
+        this.messages.push({
+            id: userMessageId,
+            text: message,
+            sender: MessageSender.USER,
+            timestamp: new Date()
+        });
 
-        // Check if this is a send money request and user is authenticated
-        if (sendMoneyMatch && this.isAuthenticated) {
-            console.log('Detected send money intent locally:', sendMoneyMatch);
+        // Check if we're in the middle of a conversation flow
+        const conversationState = this.chatService.getConversationState();
 
-            const amount = sendMoneyMatch[1] ? parseFloat(sendMoneyMatch[1].replace(/[$,]/g, '')) : 0;
-            const recipientName = sendMoneyMatch[2];
+        // If we're expecting a recipient name
+        if (conversationState.expectingRecipient && conversationState.pendingAction === 'send') {
+            // Use the current message as the recipient name
+            const recipientName = message.trim();
 
-            // Set pending transaction details
+            // Clear the conversation state
+            this.chatService.clearConversationState();
+
+            // Set the pending transaction
             this.chatService.setPendingTransaction({
-                amount: amount,
-                currency: 'USD', // Default, will be updated from server response if available
+                amount: conversationState.partialData?.amount || 0,
+                currency: conversationState.partialData?.currency || 'USD',
                 recipient: recipientName
             });
 
-            // Add user message to chat (the service won't add it since we're not calling sendMessage)
+            // Add bot confirmation message
             this.messages.push({
                 id: Math.random().toString(36).substring(7),
-                text: message,
-                sender: MessageSender.USER,
+                text: `I'll help you send money to ${recipientName}. Let me take you to the send money form.`,
+                sender: MessageSender.BOT,
                 timestamp: new Date()
             });
 
-            // Redirect to send money form
-            this.router.navigate(['/send-money'], {
-                queryParams: {
-                    amount: amount,
-                    recipient: recipientName
-                }
-            });
+            // Navigate to send money form
+            setTimeout(() => {
+                this.router.navigate(['/send-money'], {
+                    queryParams: {
+                        recipient: recipientName,
+                        amount: conversationState.partialData?.amount || undefined
+                    }
+                });
+            }, 1000);
+
             return;
         }
 
-        // Check if this is a deposit request and user is authenticated
-        if (depositMatch && this.isAuthenticated) {
-            console.log('Detected deposit intent locally:', depositMatch);
+        // If we're expecting an amount
+        if (conversationState.expectingAmount) {
+            // Try to parse the amount from the message
+            const amountMatch = message.match(/\$?(\d+(?:\.\d+)?)/);
+            const amount = amountMatch ? parseFloat(amountMatch[1]) : 0;
 
-            const amount = depositMatch[2] ? parseFloat(depositMatch[2].replace(/[$,]/g, '')) : 0;
+            if (amount <= 0) {
+                // If we couldn't parse a valid amount, ask again
+                this.messages.push({
+                    id: Math.random().toString(36).substring(7),
+                    text: "I couldn't understand the amount. Please enter a valid number.",
+                    sender: MessageSender.BOT,
+                    timestamp: new Date()
+                });
+                return;
+            }
 
-            // Set pending transaction details for deposit
+            // Handle based on pending action
+            if (conversationState.pendingAction === 'send') {
+                // Now ask for recipient
+                this.chatService.setConversationState({
+                    expectingAmount: false,
+                    expectingRecipient: true,
+                    partialData: {
+                        ...conversationState.partialData,
+                        amount: amount
+                    }
+                });
+
+                this.messages.push({
+                    id: Math.random().toString(36).substring(7),
+                    text: `Great! You want to send $${amount}. Who would you like to send it to?`,
+                    sender: MessageSender.BOT,
+                    timestamp: new Date()
+                });
+                return;
+            } else if (conversationState.pendingAction === 'deposit') {
+                // Clear conversation state
+                this.chatService.clearConversationState();
+
+                // Navigate to deposit form
+                this.messages.push({
+                    id: Math.random().toString(36).substring(7),
+                    text: `I'll help you deposit $${amount} to your account. Taking you to the deposit form.`,
+                    sender: MessageSender.BOT,
+                    timestamp: new Date()
+                });
+
+                setTimeout(() => {
+                    this.router.navigate(['/deposit'], {
+                        queryParams: {
+                            amount: amount
+                        }
+                    });
+                }, 1000);
+                return;
+            }
+        }
+
+        // Process message locally first to check for intents
+        const sendMoneyMatch = message.match(/(?:send|transfer|remit)(?:\s+(?:(?:\$?\s*)?(\d+(?:\.\d+)?))?(?:\s*dollars|\s*euro|\s*pound|\s*usd|\s*eur|\s*gbp)?(?:\s+(?:to\s+)(\w+))?)?/i);
+        const depositMatch = message.match(/(?:deposit|add\s+money|top\s+up)(?:\s+(?:(?:\$?\s*)?(\d+(?:\.\d+)?))?(?:\s*dollars|\s*euro|\s*pound|\s*usd|\s*eur|\s*gbp)?)?/i);
+
+        // Check if this is just the word "deposit"
+        const isSimpleDeposit = message.trim().toLowerCase() === 'deposit';
+
+        // Check if this is just "send money" 
+        const isSimpleSendMoney = message.trim().toLowerCase() === 'send money' ||
+            message.trim().toLowerCase() === 'send';
+
+        // Handle single-word deposit command
+        if ((isSimpleDeposit || depositMatch) && this.isAuthenticated) {
+            console.log('Detected deposit intent locally');
+
+            // Get amount if provided, otherwise ask for amount
+            const amount = depositMatch && depositMatch[1] ?
+                parseFloat(depositMatch[1].replace(/[$,]/g, '')) : 0;
+
+            if (amount > 0) {
+                // Set pending transaction details for deposit
+                this.chatService.setPendingTransaction({
+                    amount: amount,
+                    currency: 'USD',
+                    isDeposit: true
+                });
+
+                // Add confirmation message
+                this.messages.push({
+                    id: Math.random().toString(36).substring(7),
+                    text: `I'll help you deposit $${amount} to your account. Taking you to the deposit form.`,
+                    sender: MessageSender.BOT,
+                    timestamp: new Date()
+                });
+
+                // Redirect to deposit form after a short delay
+                setTimeout(() => {
+                    this.router.navigate(['/deposit'], {
+                        queryParams: {
+                            amount: amount
+                        }
+                    });
+                }, 1000);
+            } else {
+                // Ask for the amount
+                this.chatService.setConversationState({
+                    expectingAmount: true,
+                    pendingAction: 'deposit',
+                    partialData: {}
+                });
+
+                this.messages.push({
+                    id: Math.random().toString(36).substring(7),
+                    text: "How much would you like to deposit?",
+                    sender: MessageSender.BOT,
+                    timestamp: new Date()
+                });
+            }
+            return;
+        }
+
+        // Handle simple "send money" command
+        if ((isSimpleSendMoney || sendMoneyMatch) && this.isAuthenticated) {
+            console.log('Detected send money intent locally');
+
+            let amount = 0;
+            let recipientName = '';
+
+            // Extract amount and recipient if available
+            if (sendMoneyMatch && sendMoneyMatch[1]) {
+                amount = parseFloat(sendMoneyMatch[1].replace(/[$,]/g, ''));
+            }
+
+            if (sendMoneyMatch && sendMoneyMatch[2]) {
+                recipientName = sendMoneyMatch[2];
+            }
+
+            // For simple commands without recipient, ask for more info
+            if (isSimpleSendMoney || !recipientName) {
+                // Set conversation state to expect recipient
+                this.chatService.setConversationState({
+                    expectingRecipient: true,
+                    pendingAction: 'send',
+                    partialData: {
+                        amount: amount
+                    }
+                });
+
+                this.messages.push({
+                    id: Math.random().toString(36).substring(7),
+                    text: "Who would you like to send money to?",
+                    sender: MessageSender.BOT,
+                    timestamp: new Date()
+                });
+                return;
+            }
+
+            // If we have recipient, proceed normally
             this.chatService.setPendingTransaction({
                 amount: amount,
-                currency: 'USD', // Default, will be updated from server response if available
-                isDeposit: true
+                currency: 'USD',
+                recipient: recipientName
             });
 
-            // Add user message to chat (the service won't add it since we're not calling sendMessage)
+            // Add confirmation message
             this.messages.push({
                 id: Math.random().toString(36).substring(7),
-                text: message,
-                sender: MessageSender.USER,
+                text: `I'll help you send money to ${recipientName}. Taking you to the send money form.`,
+                sender: MessageSender.BOT,
                 timestamp: new Date()
             });
 
-            // Redirect to deposit form
-            this.router.navigate(['/deposit'], {
-                queryParams: {
-                    amount: amount
-                }
-            });
+            // Navigate to send money form after a short delay
+            setTimeout(() => {
+                this.router.navigate(['/send-money'], {
+                    queryParams: {
+                        amount: amount > 0 ? amount : undefined,
+                        recipient: recipientName
+                    }
+                });
+            }, 1000);
             return;
         }
 

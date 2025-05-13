@@ -683,4 +683,25 @@ export class ChatService {
     clearPendingTransaction() {
         this.pendingTransaction = {};
     }
+    // Add this property to chat.service.ts
+
+    private conversationState: {
+        expectingRecipient?: boolean;
+        expectingAmount?: boolean;
+        pendingAction?: 'send' | 'deposit';
+        partialData?: any;
+    } = {};
+
+    // Add getter/setter methods
+    getConversationState() {
+        return { ...this.conversationState };
+    }
+
+    setConversationState(state: any) {
+        this.conversationState = { ...this.conversationState, ...state };
+    }
+
+    clearConversationState() {
+        this.conversationState = {};
+    }
 }

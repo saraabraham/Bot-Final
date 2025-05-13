@@ -114,12 +114,35 @@ namespace RemittanceAPI.Services
             };
         }
 
+        // Update this part of IdentifyIntent method in ChatbotService.cs
+
         private (string intent, Dictionary<string, object> entities, double confidence) IdentifyIntent(string message)
         {
             // Default values
             string bestIntent = "unknown";
             double bestConfidence = 0;
             var entities = new Dictionary<string, object>();
+
+            // Check for single word commands first
+            string lowerMessage = message.Trim().ToLower();
+
+            // Handle one-word deposit command
+            if (lowerMessage == "deposit")
+            {
+                return ("deposit", new Dictionary<string, object>(), 1.0);
+            }
+
+            // Handle "send money" simple command
+            if (lowerMessage == "send" || lowerMessage == "send money")
+            {
+                return ("send_money", new Dictionary<string, object>(), 1.0);
+            }
+
+            // Handle "check balance" simple command
+            if (lowerMessage == "balance" || lowerMessage == "check balance")
+            {
+                return ("check_balance", new Dictionary<string, object>(), 1.0);
+            }
 
             // Check against each intent pattern
             foreach (var pattern in _intents)
