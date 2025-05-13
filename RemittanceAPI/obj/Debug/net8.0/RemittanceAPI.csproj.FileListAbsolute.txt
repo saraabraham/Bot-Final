@@ -114,3 +114,4 @@
 /Users/sara_abraham/Desktop/Coding/Projects/BotFinal/RemittanceAPI/obj/Debug/net8.0/RemittanceAPI.pdb
 /Users/sara_abraham/Desktop/Coding/Projects/BotFinal/RemittanceAPI/obj/Debug/net8.0/RemittanceAPI.genruntimeconfig.cache
 /Users/sara_abraham/Desktop/Coding/Projects/BotFinal/RemittanceAPI/obj/Debug/net8.0/ref/RemittanceAPI.dll
+/Users/sara_abraham/Desktop/Coding/Projects/BotFinal/RemittanceAPI/obj/Debug/net8.0/RemittanceAPI.sourcelink.json

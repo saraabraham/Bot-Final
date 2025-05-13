@@ -355,5 +355,60 @@ namespace RemittanceAPI.Services
 
             return transaction;
         }
+        // Add to RemittanceService.cs
+
+        public async Task<DepositResponse> ProcessDepositAsync(string userId, DepositRequest request)
+        {
+            _logger.LogInformation($"Processing deposit of {request.Amount} {request.Currency} for user {userId}");
+
+            // Validate deposit data
+            if (request.Amount <= 0)
+            {
+                throw new ArgumentException("Amount must be greater than zero");
+            }
+
+            if (string.IsNullOrEmpty(request.Currency))
+            {
+                throw new ArgumentException("Currency is required");
+            }
+
+            if (string.IsNullOrEmpty(request.PaymentMethod))
+            {
+                throw new ArgumentException("Payment method is required");
+            }
+
+            var user = await _dbContext.Users.FirstOrDefaultAsync(u => u.Id == userId);
+            if (user == null)
+            {
+                throw new ArgumentException($"User with ID {userId} not found");
+            }
+
+            // Convert if currencies don't match
+            decimal amountInUserCurrency = request.Amount;
+            if (request.Currency != user.PreferredCurrency)
+            {
+                var rate = await GetExchangeRateAsync(request.Currency, user.PreferredCurrency);
+                amountInUserCurrency = request.Amount * rate.Rate;
+            }
+
+            // Process payment (in a real app, this would involve payment gateway integration)
+            // Simulate successful payment
+            await Task.Delay(1000);
+
+            // Add to user's balance
+            user.Balance += amountInUserCurrency;
+            _dbContext.Users.Update(user);
+            await _dbContext.SaveChangesAsync();
+
+            // Create response
+            return new DepositResponse
+            {
+                Amount = request.Amount,
+                Currency = request.Currency,
+                PaymentMethod = request.PaymentMethod,
+                Status = "Completed",
+                Timestamp = DateTime.UtcNow
+            };
+        }
     }
 }

@@ -1,0 +1,168 @@
+<div class="deposit-form-container">
+    <h2>Deposit Money</h2>
+    <div *ngIf="errorMessage" class="alert alert-danger">
+        <i class="fas fa-exclamation-circle"></i>
+        {{ errorMessage }}
+    </div>
+
+    <div *ngIf="successMessage" class="alert alert-success">
+        <i class="fas fa-check-circle"></i>
+        {{ successMessage }}
+    </div>
+
+    <!-- Balance display -->
+    <div class="balance-info">
+        <div class="balance-amount">Current Balance: <span>{{ userBalance | currency:userCurrency }}</span></div>
+    </div>
+
+    <form [formGroup]="depositForm" (ngSubmit)="onSubmit()">
+        <div class="form-group">
+            <label for="amount">Amount</label>
+            <div class="input-group">
+                <input type="number" id="amount" formControlName="amount" placeholder="Enter amount" required min="1">
+                <select id="currency-select" formControlName="currency" title="Select currency">
+                    <option *ngFor="let currency of currencies" [value]="currency">{{currency}}</option>
+                </select>
+            </div>
+            <div class="error-message" *ngIf="depositForm.get('amount')?.touched && 
+                  (depositForm.get('amount')?.errors?.['required'] || 
+                   depositForm.get('amount')?.value === null || 
+                   depositForm.get('amount')?.value <= 0)">
+                Amount is required and must be greater than zero
+            </div>
+        </div>
+
+        <div class="form-group">
+            <label for="paymentMethod">Payment Method</label>
+            <select id="paymentMethod" formControlName="paymentMethod">
+                <option *ngFor="let method of paymentMethods" [value]="method">{{method | titlecase}}</option>
+            </select>
+        </div>
+
+        <!-- Card details section (shown only when card payment method is selected) -->
+        <div class="card-details-section" *ngIf="depositForm.get('paymentMethod')?.value === 'card'">
+            <h3>Card Details</h3>
+
+            <div class="form-group">
+                <label for="cardNumber">Card Number</label>
+                <input type="text" id="cardNumber" formControlName="cardNumber" placeholder="1234567890123456"
+                    maxlength="16">
+                <div class="error-message"
+                    *ngIf="depositForm.get('cardNumber')?.touched && depositForm.get('cardNumber')?.errors">
+                    Please enter a valid 16-digit card number
+                </div>
+            </div>
+
+            <div class="form-row">
+                <div class="form-group half-width">
+                    <label for="expiryDate">Expiry Date</label>
+                    <input type="text" id="expiryDate" formControlName="expiryDate" placeholder="MM/YY" maxlength="5">
+                    <div class="error-message"
+                        *ngIf="depositForm.get('expiryDate')?.touched && depositForm.get('expiryDate')?.errors">
+                        Please enter a valid expiry date (MM/YY)
+                    </div>
+                </div>
+
+                <div class="form-group half-width">
+                    <label for="cvv">CVV</label>
+                    <input type="text" id="cvv" formControlName="cvv" placeholder="123" maxlength="4">
+                    <div class="error-message"
+                        *ngIf="depositForm.get('cvv')?.touched && depositForm.get('cvv')?.errors">
+                        Please enter a valid CVV (3-4 digits)
+                    </div>
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label for="cardHolderName">Cardholder Name</label>
+                <input type="text" id="cardHolderName" formControlName="cardHolderName" placeholder="Name on card">
+                <div class="error-message"
+                    *ngIf="depositForm.get('cardHolderName')?.touched && depositForm.get('cardHolderName')?.errors?.['required']">
+                    Cardholder name is required
+                </div>
+            </div>
+        </div>
+
+        <!-- Bank transfer details -->
+        <div class="bank-details-section" *ngIf="depositForm.get('paymentMethod')?.value === 'bank'">
+            <h3>Bank Transfer Details</h3>
+            <p class="info-text">
+                Please use the following details to complete your bank transfer:
+            </p>
+            <div class="bank-info">
+                <div class="info-row">
+                    <span>Account Name:</span>
+                    <span>RemitAssist Banking</span>
+                </div>
+                <div class="info-row">
+                    <span>Account Number:</span>
+                    <span>1234567890</span>
+                </div>
+                <div class="info-row">
+                    <span>Routing Number:</span>
+                    <span>987654321</span>
+                </div>
+                <div class="info-row">
+                    <span>Reference:</span>
+                    <span>{{ currentUserId || 'Please login' }}</span>
+                </div>
+            </div>
+            <p class="note">Note: Your account will be credited once the transfer is confirmed.</p>
+        </div>
+
+        <!-- Digital wallet section -->
+        <div class="wallet-details-section" *ngIf="depositForm.get('paymentMethod')?.value === 'wallet'">
+            <h3>Digital Wallet</h3>
+            <p class="info-text">
+                Select your preferred digital wallet to proceed with the payment:
+            </p>
+            <div class="wallet-options">
+                <div class="wallet-option">
+                    <input type="radio" id="paypal" name="walletType" checked>
+                    <label for="paypal">PayPal</label>
+                </div>
+                <div class="wallet-option">
+                    <input type="radio" id="applepay" name="walletType">
+                    <label for="applepay">Apple Pay</label>
+                </div>
+                <div class="wallet-option">
+                    <input type="radio" id="googlepay" name="walletType">
+                    <label for="googlepay">Google Pay</label>
+                </div>
+            </div>
+            <p class="note">You will be redirected to the selected wallet's payment page after submitting.</p>
+        </div>
+
+        <div class="deposit-summary">
+            <h3>Deposit Summary</h3>
+            <div class="summary-row">
+                <span>Amount:</span>
+                <span>{{depositForm.get('amount')?.value || 0 | currency:(depositForm.get('currency')?.value ||
+                    'USD')}}</span>
+            </div>
+            <div class="summary-row">
+                <span>Fee:</span>
+                <span>$0.00</span>
+            </div>
+            <div class="summary-row total">
+                <span>Total Deposit:</span>
+                <span>{{depositForm.get('amount')?.value || 0 | currency:(depositForm.get('currency')?.value ||
+                    'USD')}}</span>
+            </div>
+
+            <!-- Balance after deposit -->
+            <div class="summary-row" *ngIf="userBalance > 0 && depositForm.get('amount')?.value > 0">
+                <span>Balance After Deposit:</span>
+                <span>{{ (userBalance + depositForm.get('amount')?.value) | currency:userCurrency }}</span>
+            </div>
+        </div>
+
+        <div class="form-actions">
+            <button type="button" (click)="cancel()" class="cancel-button">Cancel</button>
+            <button type="submit" class="deposit-button" [disabled]="submitting || depositForm.invalid">
+                <span *ngIf="!submitting">Deposit Money</span>
+                <span *ngIf="submitting">Processing...</span>
+            </button>
+        </div>
+    </form>
+</div>

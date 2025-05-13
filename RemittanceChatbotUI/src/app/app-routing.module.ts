@@ -5,12 +5,14 @@ import { RemittanceFormComponent } from './components/remittance-form/remittance
 import { LoginComponent } from './components/login/login.component';
 import { AuthGuard } from './services/auth.guard';
 import { TransactionConfirmationComponent } from './components/transaction-confirmation/transaction-confirmation.component';
+import { DepositFormComponent } from './components/deposit-form/deposit-form.component';
 
-export const routes: Routes = [  // Add export here
+export const routes: Routes = [
     { path: '', redirectTo: '/chat', pathMatch: 'full' }, // Redirect root to chat
     { path: 'login', component: LoginComponent },
     { path: 'chat', component: ChatComponent, canActivate: [AuthGuard] },
     { path: 'send-money', component: RemittanceFormComponent, canActivate: [AuthGuard] },
+    { path: 'deposit', component: DepositFormComponent, canActivate: [AuthGuard] },
     {
         path: 'transaction-confirmation/:id',
         component: TransactionConfirmationComponent,

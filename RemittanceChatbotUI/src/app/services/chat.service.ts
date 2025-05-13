@@ -10,6 +10,7 @@ import { isPlatformBrowser } from '@angular/common';
 import { RemittanceService, UserBalance } from './remittance.service';
 import { Recipient } from '../models/remittance.model';
 import { AuthService } from './auth.service';
+import { Router } from '@angular/router';
 
 @Injectable({
     providedIn: 'root'
@@ -21,13 +22,25 @@ export class ChatService {
     private apiUrl = `${environment.apiUrl}/chat`;
     private isBrowser: boolean;
 
-
     private userBalance: UserBalance | null = null;
+
+    // Updated pendingTransaction property to include deposit fields
+    private pendingTransaction: {
+        amount?: number;
+        currency?: string;
+        recipient?: string;
+        recipientId?: string;
+        recipientExists?: boolean;
+        recipientComplete?: boolean;
+        isDeposit?: boolean;
+        paymentMethod?: string;
+    } = {};
 
     constructor(
         private http: HttpClient,
         private remittanceService: RemittanceService,
         private authService: AuthService,
+        private router: Router,
         @Inject(PLATFORM_ID) private platformId: Object
     ) {
         this.isBrowser = isPlatformBrowser(this.platformId);
@@ -35,7 +48,7 @@ export class ChatService {
         // Initialize with welcome message
         this.addMessage({
             id: uuidv4(),
-            text: 'Welcome to our remittance chatbot! How can I help you today? You can send money, check rates, check your balance, or manage recipients.',
+            text: 'Welcome to our remittance chatbot! How can I help you today? You can send money, deposit funds, check rates, check your balance, or manage recipients.',
             sender: MessageSender.BOT,
             timestamp: new Date()
         });
@@ -123,13 +136,16 @@ export class ChatService {
         });
 
         // Process message locally first to check for send money intents
-        const sendMoneyMatch = text.match(/(?:send|transfer|remit)\s+(?:(?:\$?\s*)?([\d,.]+))?\s*(?:dollars|euro|pound|usd|eur|gbp)?\s+(?:to\s+)(\w+)/i);
+        const sendMoneyMatch = text.match(/(?:send|transfer|remit)\s+(?:(?:\$?\s*)?(\[\d,.\]+))?\s*(?:dollars|euro|pound|usd|eur|gbp)?\s+(?:to\s+)(\w+)/i);
+
+        // Check for deposit intents
+        const depositMatch = text.match(/(deposit|add\s+money|top\s+up)\s+(?:(?:\$?\s*)?(\[\d,.\]+))?\s*(?:dollars|euro|pound|usd|eur|gbp)?/i);
 
         // Check if this is a send money request and user is authenticated
         if (sendMoneyMatch && this.authService.isAuthenticated) {
             console.log('Detected send money intent locally:', sendMoneyMatch);
 
-            const amount = sendMoneyMatch[1] ? parseFloat(sendMoneyMatch[1].replace(/[$,]/g, '')) : 0;
+            const amount = sendMoneyMatch[1] ? parseFloat(sendMoneyMatch[1].replace(/[\$,]/g, '')) : 0;
             const recipientName = sendMoneyMatch[2];
 
             // Set pending transaction details
@@ -141,6 +157,23 @@ export class ChatService {
 
             // Process locally with preliminary checks
             return this.processMoneyTransferIntent(amount, recipientName, botMessageId);
+        }
+
+        // Check if this is a deposit request and user is authenticated
+        if (depositMatch && this.authService.isAuthenticated) {
+            console.log('Detected deposit intent locally:', depositMatch);
+
+            const amount = depositMatch[2] ? parseFloat(depositMatch[2].replace(/[\$,]/g, '')) : 0;
+
+            // Set pending transaction details for deposit
+            this.pendingTransaction = {
+                amount: amount,
+                currency: 'USD', // Default, will be updated from server response if available
+                isDeposit: true
+            };
+
+            // Process locally with balance check
+            return this.processDepositIntent(amount, botMessageId);
         }
 
         // Send to backend for processing
@@ -172,11 +205,70 @@ export class ChatService {
                         this.pendingTransaction.recipient = response.entities['recipient'].toString();
                     }
                 }
+
+                // Handle deposit intent from server response
+                if (response.intent === 'deposit' && response.entities) {
+                    if (response.entities['amount']) {
+                        this.pendingTransaction.amount = parseFloat(response.entities['amount'].toString());
+                    }
+                    if (response.entities['currency']) {
+                        this.pendingTransaction.currency = response.entities['currency'].toString();
+                    }
+                    if (response.entities['paymentMethod']) {
+                        this.pendingTransaction.paymentMethod = response.entities['paymentMethod'].toString();
+                    }
+                    this.pendingTransaction.isDeposit = true;
+                }
             })
         );
     }
 
-    // New method to handle money transfer intent locally
+    // New method to handle deposit intent locally
+    private processDepositIntent(amount: number, botMessageId: string): Observable<BotCommand> {
+        // Check if we need to fetch the balance
+        if (!this.userBalance) {
+            return this.remittanceService.getUserBalance().pipe(
+                tap(balance => {
+                    this.userBalance = balance;
+                }),
+                switchMap(balance => this.continueDepositProcessing(amount, botMessageId, balance))
+            );
+        } else {
+            return this.continueDepositProcessing(amount, botMessageId, this.userBalance);
+        }
+    }
+
+    // Continue processing deposit after getting balance
+    private continueDepositProcessing(
+        amount: number,
+        botMessageId: string,
+        balance: UserBalance
+    ): Observable<BotCommand> {
+        const currency = balance.currency;
+
+        // Generate response text
+        const responseText = amount > 0
+            ? `I can help you deposit ${amount} ${currency} to your account. Your current balance is ${balance.balance} ${currency}, and after the deposit it would be ${balance.balance + amount} ${currency}. Would you like to proceed?`
+            : `I can help you deposit money to your account. Your current balance is ${balance.balance} ${currency}. How much would you like to deposit?`;
+
+        // Update bot message
+        this.updateBotMessage(botMessageId, responseText);
+
+        // Create response object
+        const response = {
+            intent: 'deposit',
+            entities: {
+                amount: amount,
+                currency: currency
+            },
+            confidence: 0.9,
+            text: responseText
+        };
+
+        return of(response);
+    }
+
+    // Method to handle money transfer intent locally
     private processMoneyTransferIntent(amount: number, recipientName: string, botMessageId: string): Observable<BotCommand> {
         // Check if we need to fetch the balance
         if (!this.userBalance) {
@@ -195,7 +287,6 @@ export class ChatService {
     // Update in chat.service.ts
 
     // Inside the ChatService class, update the continueMoneyTransferProcessing method:
-
     private continueMoneyTransferProcessing(
         amount: number,
         recipientName: string,
@@ -392,15 +483,6 @@ export class ChatService {
         );
     }
 
-    // Update the chat service "pendingTransaction" property type 
-    private pendingTransaction: {
-        amount?: number;
-        currency?: string;
-        recipient?: string;
-        recipientId?: string;
-        recipientExists?: boolean;
-        recipientComplete?: boolean;
-    } = {};
     // Helper method to update bot message text
     private updateBotMessage(messageId: string, text: string): void {
         const currentMessages = this.messages.value;
@@ -479,14 +561,63 @@ export class ChatService {
                         this.processMoneyTransferIntent(amount, recipient, botMessageId).subscribe();
                     }
                 }
+
+                // Process deposit intent locally if detected
+                if (response.intent === 'deposit' && this.authService.isAuthenticated) {
+                    if (response.entities && response.entities['amount']) {
+                        const amount = parseFloat(response.entities['amount'].toString());
+
+                        // Save pending transaction details
+                        this.pendingTransaction = {
+                            amount: amount,
+                            currency: response.entities['currency']?.toString() || 'USD',
+                            isDeposit: true,
+                            paymentMethod: response.entities['paymentMethod']?.toString() || 'card'
+                        };
+
+                        // Process locally with balance check
+                        this.processDepositIntent(amount, botMessageId).subscribe();
+                    }
+                }
             })
         );
+    }
+
+    // Handle deposit intent from chat component
+    handleDeposit(entities: any): void {
+        const amount = entities.amount || 0;
+        const currency = entities.currency || 'USD';
+
+        if (!this.authService.isAuthenticated) {
+            // Add message suggesting login
+            this.addMessage({
+                id: uuidv4(),
+                text: 'You need to log in to make a deposit. Would you like to log in now?',
+                sender: MessageSender.BOT,
+                timestamp: new Date(),
+                actions: [
+                    {
+                        text: 'Login',
+                        action: () => this.router.navigate(['/login'])
+                    }
+                ]
+            });
+            return;
+        }
+
+        // Navigate to deposit form with appropriate params
+        this.router.navigate(['/deposit'], {
+            queryParams: {
+                amount: amount,
+                currency: currency
+            }
+        });
     }
 
     private generateBotResponse(command: BotCommand): string {
         // Convert intent and entities into human-readable response
         if (command.intent === 'unknown') {
-            return 'I\'m not sure I understand. Could you rephrase or tell me if you want to send money, check rates, or manage recipients?';
+            return 'I\'m not sure I understand. Could you rephrase or tell me if you want to send money, deposit funds, check rates, or manage recipients?';
         }
 
         switch (command.intent) {
@@ -498,6 +629,11 @@ export class ChatService {
                 const currency = command.entities['currency'] || 'USD';
                 const recipient = command.entities['recipient'] || 'someone';
                 return `I'll help you send ${amount} ${currency} to ${recipient}. Would you like to proceed?`;
+
+            case 'deposit':
+                const depositAmount = command.entities['amount'] || 'some money';
+                const depositCurrency = command.entities['currency'] || 'USD';
+                return `I'll help you deposit ${depositAmount} ${depositCurrency} to your account. Would you like to proceed?`;
 
             case 'check_rates':
                 const fromCurrency = command.entities['fromCurrency'] || 'USD';
@@ -516,7 +652,7 @@ export class ChatService {
                 }
 
             case 'help':
-                return 'I can help you send money, check exchange rates, manage recipients, and track transactions. What would you like to do?';
+                return 'I can help you send money, deposit funds, check exchange rates, manage recipients, and track transactions. What would you like to do?';
 
             default:
                 return `I understand you want to ${command.intent.replace('_', ' ')}. How can I help with that?`;
@@ -536,6 +672,11 @@ export class ChatService {
     // Method to get the pending transaction info
     getPendingTransaction() {
         return { ...this.pendingTransaction };
+    }
+
+    // Method to set the pending transaction info
+    setPendingTransaction(transaction: any) {
+        this.pendingTransaction = { ...this.pendingTransaction, ...transaction };
     }
 
     // Method to clear the pending transaction info

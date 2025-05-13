@@ -29,11 +29,12 @@ namespace RemittanceAPI.Services
             _dbContext = dbContext;
             _remittanceService = remittanceService;
 
-            // Enhanced intent patterns including more precise money transfer detection
+            // Enhanced intent patterns including deposit and money transfer detection
             _intents = new Dictionary<string, Regex>
             {
                 { "greeting", new Regex(@"(hello|hi|hey|greetings)", RegexOptions.IgnoreCase) },
-                { "send_money", new Regex(@"(?:send|transfer|remit)\s+(?:(?:\$?\s*)?([\d,.]+))?\s*(?:dollars|euro|pound|usd|eur|gbp)?\s+(?:to\s+)(\w+)", RegexOptions.IgnoreCase) },
+                { "send_money", new Regex(@"(?:send|transfer|remit)\s+(?:(?:\$?\s*)?(\[\d,.\]+))?\s*(?:dollars|euro|pound|usd|eur|gbp)?\s+(?:to\s+)(\w+)", RegexOptions.IgnoreCase) },
+                { "deposit", new Regex(@"(deposit|add\s+money|add\s+funds|load\s+money|put\s+in|top\s+up)\s+(?:(?:\$?\s*)?(\[\d,.\]+))?\s*(?:dollars|euro|pound|usd|eur|gbp)?", RegexOptions.IgnoreCase) },
                 { "check_balance", new Regex(@"(balance|how\s+much|available\s+funds|account\s+balance)", RegexOptions.IgnoreCase) },
                 { "check_rates", new Regex(@"(rate|exchange|conversion|convert)\s*(\w{3})?\s*(to|and)\s*(\w{3})?", RegexOptions.IgnoreCase) },
                 { "get_recipients", new Regex(@"(recipient|beneficiary|receiver|payee)s?", RegexOptions.IgnoreCase) },
@@ -151,7 +152,7 @@ namespace RemittanceAPI.Services
             {
                 case "send_money":
                     // Enhanced send_money pattern extraction
-                    var sendMoneyMatch = Regex.Match(message, @"(?:send|transfer|remit)\s+(?:(?:\$?\s*)?([\d,.]+))?\s*(?:dollars|euro|pound|usd|eur|gbp)?\s+(?:to\s+)(\w+)", RegexOptions.IgnoreCase);
+                    var sendMoneyMatch = Regex.Match(message, @"(?:send|transfer|remit)\s+(?:(?:\$?\s*)?(\[\d,.\]+))?\s*(?:dollars|euro|pound|usd|eur|gbp)?\s+(?:to\s+)(\w+)", RegexOptions.IgnoreCase);
 
                     if (sendMoneyMatch.Success)
                     {
@@ -192,6 +193,52 @@ namespace RemittanceAPI.Services
                     }
                     break;
 
+                case "deposit":
+                    // Extract amount for deposit
+                    var depositMatch = Regex.Match(message, @"(?:deposit|add\s+money|add\s+funds|load|put\s+in|top\s+up)\s+(?:(?:\$?\s*)?(\[\d,.\]+))?\s*(?:dollars|euro|pound|usd|eur|gbp)?", RegexOptions.IgnoreCase);
+
+                    if (depositMatch.Success && depositMatch.Groups.Count > 1 && !string.IsNullOrEmpty(depositMatch.Groups[1].Value))
+                    {
+                        string amountStr = depositMatch.Groups[1].Value.Replace("$", "").Replace(",", "");
+                        if (decimal.TryParse(amountStr, out decimal amount))
+                        {
+                            entities["amount"] = amount;
+                        }
+                    }
+
+                    // Try to extract currency for deposit
+                    var depositCurrencyMatch = Regex.Match(message.ToLower(), @"(dollar|usd|euro|eur|pound|gbp)");
+                    if (depositCurrencyMatch.Success)
+                    {
+                        string currency = depositCurrencyMatch.Groups[1].Value.ToUpper();
+                        switch (currency)
+                        {
+                            case "DOLLAR": entities["currency"] = "USD"; break;
+                            case "EURO": entities["currency"] = "EUR"; break;
+                            case "POUND": entities["currency"] = "GBP"; break;
+                            default: entities["currency"] = currency; break;
+                        }
+                    }
+                    else
+                    {
+                        // Default to USD if no currency specified
+                        entities["currency"] = "USD";
+                    }
+
+                    // Try to extract payment method
+                    var methodMatch = Regex.Match(message.ToLower(), @"(card|bank|wallet|credit\s+card|debit\s+card)");
+                    if (methodMatch.Success)
+                    {
+                        string method = methodMatch.Groups[1].Value.ToLower();
+                        switch (method)
+                        {
+                            case "credit card":
+                            case "debit card": entities["paymentMethod"] = "card"; break;
+                            default: entities["paymentMethod"] = method; break;
+                        }
+                    }
+                    break;
+
                 case "check_rates":
                     // Try to extract currencies
                     var currenciesMatch = Regex.Match(message.ToUpper(), @"(\w{3})?\s*(TO|AND)\s*(\w{3})?");
@@ -222,6 +269,48 @@ namespace RemittanceAPI.Services
                 case "greeting":
                     return "Hello! How can I help you with your money transfer today?";
 
+                case "deposit":
+                    if (string.IsNullOrEmpty(userId))
+                    {
+                        string amount = entities.TryGetValue("amount", out var amtVal)
+                            ? amtVal.ToString()
+                            : "some money";
+
+                        string currency = entities.TryGetValue("currency", out var currVal)
+                            ? currVal.ToString()
+                            : "USD";
+
+                        return $"I'd like to help you deposit {amount} {currency} into your account. Please log in to continue.";
+                    }
+
+                    // Enhanced response for deposit
+                    try
+                    {
+                        // Check if we have amount
+                        if (!entities.TryGetValue("amount", out var amtVal))
+                        {
+                            return "I need to know how much you'd like to deposit. " +
+                                   "Please say something like 'deposit 100 dollars'.";
+                        }
+
+                        decimal amount = decimal.Parse(amtVal.ToString());
+                        string currency = entities.TryGetValue("currency", out var currVal)
+                            ? currVal.ToString()
+                            : "USD";
+
+                        string paymentMethod = entities.TryGetValue("paymentMethod", out var methodVal)
+                            ? methodVal.ToString()
+                            : "card";
+
+                        return $"I can help you deposit {amount} {currency} using {paymentMethod}. " +
+                               "Would you like to proceed with this deposit?";
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "Error processing deposit command");
+                        return "I'm having trouble processing your deposit request. Please try again later.";
+                    }
+
                 case "send_money":
                     if (string.IsNullOrEmpty(userId))
                     {
@@ -244,8 +333,7 @@ namespace RemittanceAPI.Services
                     try
                     {
                         // Check if we have amount and recipient
-                        if (!entities.TryGetValue("amount", out var amtVal) ||
-                            !entities.TryGetValue("recipient", out var recVal))
+                        if (!entities.TryGetValue("amount", out var amtVal) || !entities.TryGetValue("recipient", out var recVal))
                         {
                             return "I need to know how much you want to send and to whom. " +
                                    "Please say something like 'send 100 dollars to John'.";
@@ -311,6 +399,7 @@ namespace RemittanceAPI.Services
                         _logger.LogError(ex, "Error processing send money command");
                         return "I'm having trouble processing your request. Please try again later.";
                     }
+
                 case "check_balance":
                     if (string.IsNullOrEmpty(userId))
                     {
@@ -349,10 +438,10 @@ namespace RemittanceAPI.Services
                     }
 
                 case "help":
-                    return "I can help you send money, check your balance, look up exchange rates, manage recipients, and track transactions. What would you like to do?";
+                    return "I can help you send money, check your balance, deposit funds, look up exchange rates, manage recipients, and track transactions. What would you like to do?";
 
                 default:
-                    return "I'm not sure I understand. Could you rephrase or tell me if you want to send money, check rates, or manage recipients?";
+                    return "I'm not sure I understand. Could you rephrase or tell me if you want to send money, deposit funds, check rates, or manage recipients?";
             }
         }
 

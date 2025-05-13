@@ -300,5 +300,43 @@ namespace RemittanceAPI.Controllers
                 return StatusCode(500, new { message = $"An error occurred: {ex.Message}" });
             }
         }
+        // Add to RemittanceController.cs
+
+        // Add this endpoint for deposits
+        [Authorize]
+        [HttpPost("deposit")]
+        public async Task<IActionResult> DepositMoney([FromBody] DepositRequest request)
+        {
+            if (request == null)
+            {
+                return BadRequest(new { message = "Deposit data is required" });
+            }
+
+            try
+            {
+                string userId = User.FindFirst("sub")?.Value;
+                if (string.IsNullOrEmpty(userId))
+                {
+                    // Try alternative claim types
+                    userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+                    _logger.LogInformation($"DepositMoney - User ID from NameIdentifier: {userId}");
+
+                    if (string.IsNullOrEmpty(userId))
+                    {
+                        return BadRequest(new { message = "User ID not found in token" });
+                    }
+                }
+
+                // Process the deposit
+                var result = await _remittanceService.ProcessDepositAsync(userId, request);
+                return Ok(result);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error processing deposit");
+                return StatusCode(500, new { message = $"Error processing deposit: {ex.Message}" });
+            }
+        }
     }
+
 }

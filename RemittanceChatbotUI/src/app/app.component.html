@@ -8,6 +8,7 @@
       <ng-container *ngIf="isAuthenticated">
         <a [routerLink]="['/chat']" routerLinkActive="active">Chat</a>
         <a [routerLink]="['/send-money']" routerLinkActive="active">Send Money</a>
+        <a [routerLink]="['/deposit']" routerLinkActive="active">Deposit</a>
         <a (click)="logout()" class="logout-link">Logout</a>
       </ng-container>
 

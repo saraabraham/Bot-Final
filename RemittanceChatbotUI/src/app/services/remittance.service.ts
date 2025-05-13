@@ -1,5 +1,3 @@
-// Update the remittance.service.ts
-
 import { Injectable } from '@angular/core';
 import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { Observable, throwError } from 'rxjs';
@@ -11,6 +9,53 @@ import { environment } from '../../environments/environment';
 export interface UserBalance {
     balance: number;
     currency: string;
+}
+
+// Add this interface for deposit
+export interface DepositRequest {
+    amount: number;
+    currency: string;
+    paymentMethod: string;
+    cardDetails?: {
+        cardNumber: string;
+        expiryDate: string;
+        cvv: string;
+        cardHolderName: string;
+    };
+}
+
+// Add this interface for deposit response
+export interface DepositResponse {
+    id: string;
+    amount: number;
+    currency: string;
+    paymentMethod: string;
+    status: string;
+    timestamp: Date;
+    transactionRef: string;
+}
+// Add this interface for deposit
+export interface DepositRequest {
+    amount: number;
+    currency: string;
+    paymentMethod: string;
+    cardDetails?: {
+        cardNumber: string;
+        expiryDate: string;
+        cvv: string;
+        cardHolderName: string;
+    };
+}
+
+// Add this interface for deposit response
+export interface DepositResponse {
+    id: string;
+    amount: number;
+    currency: string;
+    paymentMethod: string;
+    status: string;
+    timestamp: Date;
+    transactionRef: string;
 }
 
 @Injectable({
@@ -47,6 +92,16 @@ export class RemittanceService {
         return this.http.get<UserBalance>(`${this.apiUrl}/balance`)
             .pipe(
                 tap(balance => console.log('Balance received:', balance)),
+                catchError(this.handleError)
+            );
+    }
+
+    // Add method for deposits
+    depositMoney(depositRequest: DepositRequest): Observable<DepositResponse> {
+        console.log('Processing deposit request:', depositRequest);
+        return this.http.post<DepositResponse>(`${this.apiUrl}/deposit`, depositRequest)
+            .pipe(
+                tap(result => console.log('Deposit result:', result)),
                 catchError(this.handleError)
             );
     }
@@ -142,4 +197,5 @@ export class RemittanceService {
         return this.http.get<RemittanceTransaction>(`${this.apiUrl}/status/${id}`)
             .pipe(catchError(this.handleError));
     }
+
 }

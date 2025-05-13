@@ -1,9 +1,9 @@
-// Update chat.component.ts
+// Updated chat.component.ts
 
 import { Component, OnInit, OnDestroy, ViewChild, ElementRef, AfterViewChecked } from '@angular/core';
 import { CommonModule, DatePipe } from '@angular/common';
 import { FormsModule } from '@angular/forms';
-import { RouterModule, Router } from '@angular/router';
+import { RouterModule, Router, ActivatedRoute } from '@angular/router';
 import { Subject, takeUntil } from 'rxjs';
 import { ChatService } from '../../services/chat.service';
 import { VoiceRecognitionService } from '../../services/voice-recognition.service';
@@ -42,7 +42,8 @@ export class ChatComponent implements OnInit, OnDestroy, AfterViewChecked {
         private voiceService: VoiceRecognitionService,
         private remittanceService: RemittanceService,
         private authService: AuthService,
-        private router: Router
+        private router: Router,
+        private route: ActivatedRoute
     ) { }
 
     ngOnInit(): void {
@@ -85,9 +86,37 @@ export class ChatComponent implements OnInit, OnDestroy, AfterViewChecked {
                     // This makes the experience more natural - say command, it stops listening
                     if (transcript.toLowerCase().includes('send') ||
                         transcript.toLowerCase().includes('check balance') ||
-                        transcript.toLowerCase().includes('exchange rate')) {
+                        transcript.toLowerCase().includes('exchange rate') ||
+                        transcript.toLowerCase().includes('deposit')) {
                         this.stopVoiceRecognition();
                     }
+                }
+            });
+
+        // Check for transaction success query params (both deposit and send money)
+        this.route.queryParams
+            .pipe(takeUntil(this.destroy$))
+            .subscribe(params => {
+                // Handle deposit success
+                if (params['depositSuccess'] === 'true' && params['amount'] && params['currency']) {
+                    // Add a success message to the chat
+                    this.messages.push({
+                        id: Math.random().toString(36).substring(7),
+                        text: `Your deposit of ${params['amount']} ${params['currency']} was successful! Your account has been updated.`,
+                        sender: MessageSender.BOT,
+                        timestamp: new Date()
+                    });
+                }
+
+                // Handle send money success (if you have a similar parameter)
+                if (params['transactionSuccess'] === 'true' && params['recipient']) {
+                    // Add a success message to the chat
+                    this.messages.push({
+                        id: Math.random().toString(36).substring(7),
+                        text: `Your money transfer to ${params['recipient']} was successful!`,
+                        sender: MessageSender.BOT,
+                        timestamp: new Date()
+                    });
                 }
             });
 
@@ -118,6 +147,73 @@ export class ChatComponent implements OnInit, OnDestroy, AfterViewChecked {
         const message = this.newMessage;
         this.newMessage = '';
 
+        // Process message locally first to check for intents
+        const sendMoneyMatch = message.match(/(?:send|transfer|remit)\s+(?:(?:\$?\s*)?(\d+(?:\.\d+)?))?(?:\s*dollars|\s*euro|\s*pound|\s*usd|\s*eur|\s*gbp)?\s+(?:to\s+)(\w+)/i);
+        const depositMatch = message.match(/(deposit|add\s+money|top\s+up)\s+(?:(?:\$?\s*)?(\d+(?:\.\d+)?))?(?:\s*dollars|\s*euro|\s*pound|\s*usd|\s*eur|\s*gbp)?/i);
+
+        // Check if this is a send money request and user is authenticated
+        if (sendMoneyMatch && this.isAuthenticated) {
+            console.log('Detected send money intent locally:', sendMoneyMatch);
+
+            const amount = sendMoneyMatch[1] ? parseFloat(sendMoneyMatch[1].replace(/[$,]/g, '')) : 0;
+            const recipientName = sendMoneyMatch[2];
+
+            // Set pending transaction details
+            this.chatService.setPendingTransaction({
+                amount: amount,
+                currency: 'USD', // Default, will be updated from server response if available
+                recipient: recipientName
+            });
+
+            // Add user message to chat (the service won't add it since we're not calling sendMessage)
+            this.messages.push({
+                id: Math.random().toString(36).substring(7),
+                text: message,
+                sender: MessageSender.USER,
+                timestamp: new Date()
+            });
+
+            // Redirect to send money form
+            this.router.navigate(['/send-money'], {
+                queryParams: {
+                    amount: amount,
+                    recipient: recipientName
+                }
+            });
+            return;
+        }
+
+        // Check if this is a deposit request and user is authenticated
+        if (depositMatch && this.isAuthenticated) {
+            console.log('Detected deposit intent locally:', depositMatch);
+
+            const amount = depositMatch[2] ? parseFloat(depositMatch[2].replace(/[$,]/g, '')) : 0;
+
+            // Set pending transaction details for deposit
+            this.chatService.setPendingTransaction({
+                amount: amount,
+                currency: 'USD', // Default, will be updated from server response if available
+                isDeposit: true
+            });
+
+            // Add user message to chat (the service won't add it since we're not calling sendMessage)
+            this.messages.push({
+                id: Math.random().toString(36).substring(7),
+                text: message,
+                sender: MessageSender.USER,
+                timestamp: new Date()
+            });
+
+            // Redirect to deposit form
+            this.router.navigate(['/deposit'], {
+                queryParams: {
+                    amount: amount
+                }
+            });
+            return;
+        }
+
+        // If no local handling, send to service for processing
         this.chatService.sendMessage(message).subscribe({
             next: (command: BotCommand) => {
                 // Process the bot's command/intent if needed
@@ -130,6 +226,8 @@ export class ChatComponent implements OnInit, OnDestroy, AfterViewChecked {
                     this.handleSendMoney(command.entities);
                 } else if (command.intent === 'check_balance') {
                     this.handleCheckBalance();
+                } else if (command.intent === 'deposit') {
+                    this.handleDeposit(command.entities);
                 }
             },
             error: (error: any) => {
@@ -177,6 +275,8 @@ export class ChatComponent implements OnInit, OnDestroy, AfterViewChecked {
                         this.handleSendMoney(command.entities);
                     } else if (command.intent === 'check_balance') {
                         this.handleCheckBalance();
+                    } else if (command.intent === 'deposit') {
+                        this.handleDeposit(command.entities);
                     }
                 },
                 error: (error: any) => {
@@ -230,7 +330,13 @@ export class ChatComponent implements OnInit, OnDestroy, AfterViewChecked {
                 id: Math.random().toString(36).substring(7),
                 text: 'You need to log in to check your balance. Would you like to log in now?',
                 sender: MessageSender.BOT,
-                timestamp: new Date()
+                timestamp: new Date(),
+                actions: [
+                    {
+                        text: 'Login',
+                        action: () => this.router.navigate(['/login'])
+                    }
+                ]
             });
             return;
         }
@@ -307,10 +413,66 @@ export class ChatComponent implements OnInit, OnDestroy, AfterViewChecked {
                 id: Math.random().toString(36).substring(7),
                 text: 'You need to log in to send money. Would you like to log in now?',
                 sender: MessageSender.BOT,
-                timestamp: new Date()
+                timestamp: new Date(),
+                actions: [
+                    {
+                        text: 'Login',
+                        action: () => this.router.navigate(['/login'])
+                    }
+                ]
             });
         }
     }
+
+    // Add method to handle deposit intents
+    private handleDeposit(entities: any): void {
+        const amount = entities.amount || 0;
+        const currency = entities.currency || 'USD';
+        const paymentMethod = entities.paymentMethod || 'card';
+
+        if (!this.isAuthenticated) {
+            // Add message suggesting login
+            this.messages.push({
+                id: Math.random().toString(36).substring(7),
+                text: 'You need to log in to make a deposit. Would you like to log in now?',
+                sender: MessageSender.BOT,
+                timestamp: new Date(),
+                actions: [
+                    {
+                        text: 'Login',
+                        action: () => this.router.navigate(['/login'])
+                    }
+                ]
+            });
+            return;
+        }
+
+        // Show confirmation message with action buttons
+        const messageId = Math.random().toString(36).substring(7);
+        this.messages.push({
+            id: messageId,
+            text: `Would you like to deposit ${amount} ${currency} to your account?`,
+            sender: MessageSender.BOT,
+            timestamp: new Date(),
+            actions: [
+                {
+                    text: 'Yes, proceed to deposit',
+                    action: () => this.router.navigate(['/deposit'], {
+                        queryParams: {
+                            amount: amount,
+                            currency: currency,
+                            method: paymentMethod
+                        }
+                    })
+                },
+                {
+                    text: 'No, cancel',
+                    action: () => this.handleCancelTransaction()
+                }
+            ]
+        });
+    }
+
     // Add methods to handle recipient confirmation and details completion
     private showConfirmAddRecipient(amount: number, recipientName: string, currency: string): void {
         // Add a confirmation message with action buttons
