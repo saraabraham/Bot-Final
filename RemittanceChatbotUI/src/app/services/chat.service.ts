@@ -36,6 +36,15 @@ export class ChatService {
         paymentMethod?: string;
     } = {};
 
+    // Add conversation state management
+    private conversationState: {
+        expectingRecipient?: boolean;
+        expectingAmount?: boolean;
+        expectingCurrencyPair?: boolean;
+        pendingAction?: 'send' | 'deposit' | 'check_rates';
+        partialData?: any;
+    } = {};
+
     constructor(
         private http: HttpClient,
         private remittanceService: RemittanceService,
@@ -113,6 +122,19 @@ export class ChatService {
     private addMessage(message: ChatMessage): void {
         const currentMessages = this.messages.value;
         this.messages.next([...currentMessages, message]);
+    }
+
+    // Conversation state management methods
+    getConversationState() {
+        return { ...this.conversationState };
+    }
+
+    setConversationState(state: any) {
+        this.conversationState = { ...this.conversationState, ...state };
+    }
+
+    clearConversationState() {
+        this.conversationState = {};
     }
 
     sendMessage(text: string): Observable<BotCommand> {
@@ -284,9 +306,6 @@ export class ChatService {
     }
 
     // Continue processing after getting the balance
-    // Update in chat.service.ts
-
-    // Inside the ChatService class, update the continueMoneyTransferProcessing method:
     private continueMoneyTransferProcessing(
         amount: number,
         recipientName: string,
@@ -499,52 +518,19 @@ export class ChatService {
         this.messages.next(updatedMessages);
     }
 
+
     processVoiceInput(audioBlob: Blob): Observable<BotCommand> {
         const formData = new FormData();
         formData.append('audio', audioBlob);
 
-        // Add temporary user message
-        const userMessageId = uuidv4();
-        this.addMessage({
-            id: userMessageId,
-            text: '🎤 Processing voice input...',
-            sender: MessageSender.USER,
-            timestamp: new Date()
-        });
-
-        // Add temporary bot message showing "typing" state
-        const botMessageId = uuidv4();
-        this.addMessage({
-            id: botMessageId,
-            text: '',
-            sender: MessageSender.BOT,
-            timestamp: new Date(),
-            isProcessing: true
-        });
+        // No longer add any messages here - the ChatComponent will handle it
+        // We're just processing the audio and returning the command
 
         return this.http.post<BotCommand>(`${this.apiUrl}/voice`, formData).pipe(
             tap(response => {
-                // Update the user message with transcribed text
-                const currentMessages = this.messages.value;
-                const updatedMessages = currentMessages.map(msg => {
-                    if (msg.id === userMessageId) {
-                        return {
-                            ...msg,
-                            text: response.text ? `🎤 ${response.text}` : '🎤 (Voice input)'
-                        };
-                    }
-                    if (msg.id === botMessageId) {
-                        return {
-                            ...msg,
-                            text: response.text || this.generateBotResponse(response),
-                            isProcessing: false
-                        };
-                    }
-                    return msg;
-                });
-                this.messages.next(updatedMessages);
+                // Just save pending transaction details if needed
 
-                // Process money transfer intent locally if detected
+                // For money transfer intent
                 if (response.intent === 'send_money' && this.authService.isAuthenticated) {
                     if (response.entities && response.entities['amount'] && response.entities['recipient']) {
                         const amount = parseFloat(response.entities['amount'].toString());
@@ -556,13 +542,10 @@ export class ChatService {
                             currency: response.entities['currency']?.toString() || 'USD',
                             recipient: recipient
                         };
-
-                        // Process locally with balance check and recipient validation
-                        this.processMoneyTransferIntent(amount, recipient, botMessageId).subscribe();
                     }
                 }
 
-                // Process deposit intent locally if detected
+                // For deposit intent
                 if (response.intent === 'deposit' && this.authService.isAuthenticated) {
                     if (response.entities && response.entities['amount']) {
                         const amount = parseFloat(response.entities['amount'].toString());
@@ -574,47 +557,11 @@ export class ChatService {
                             isDeposit: true,
                             paymentMethod: response.entities['paymentMethod']?.toString() || 'card'
                         };
-
-                        // Process locally with balance check
-                        this.processDepositIntent(amount, botMessageId).subscribe();
                     }
                 }
             })
         );
-    }
-
-    // Handle deposit intent from chat component
-    handleDeposit(entities: any): void {
-        const amount = entities.amount || 0;
-        const currency = entities.currency || 'USD';
-
-        if (!this.authService.isAuthenticated) {
-            // Add message suggesting login
-            this.addMessage({
-                id: uuidv4(),
-                text: 'You need to log in to make a deposit. Would you like to log in now?',
-                sender: MessageSender.BOT,
-                timestamp: new Date(),
-                actions: [
-                    {
-                        text: 'Login',
-                        action: () => this.router.navigate(['/login'])
-                    }
-                ]
-            });
-            return;
-        }
-
-        // Navigate to deposit form with appropriate params
-        this.router.navigate(['/deposit'], {
-            queryParams: {
-                amount: amount,
-                currency: currency
-            }
-        });
-    }
-
-    private generateBotResponse(command: BotCommand): string {
+    } private generateBotResponse(command: BotCommand): string {
         // Convert intent and entities into human-readable response
         if (command.intent === 'unknown') {
             return 'I\'m not sure I understand. Could you rephrase or tell me if you want to send money, deposit funds, check rates, or manage recipients?';
@@ -682,26 +629,5 @@ export class ChatService {
     // Method to clear the pending transaction info
     clearPendingTransaction() {
         this.pendingTransaction = {};
-    }
-    // Add this property to chat.service.ts
-
-    private conversationState: {
-        expectingRecipient?: boolean;
-        expectingAmount?: boolean;
-        pendingAction?: 'send' | 'deposit';
-        partialData?: any;
-    } = {};
-
-    // Add getter/setter methods
-    getConversationState() {
-        return { ...this.conversationState };
-    }
-
-    setConversationState(state: any) {
-        this.conversationState = { ...this.conversationState, ...state };
-    }
-
-    clearConversationState() {
-        this.conversationState = {};
     }
 }

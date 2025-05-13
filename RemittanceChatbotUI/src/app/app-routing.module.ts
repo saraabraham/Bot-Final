@@ -6,6 +6,7 @@ import { LoginComponent } from './components/login/login.component';
 import { AuthGuard } from './services/auth.guard';
 import { TransactionConfirmationComponent } from './components/transaction-confirmation/transaction-confirmation.component';
 import { DepositFormComponent } from './components/deposit-form/deposit-form.component';
+import { ExchangeRateComponent } from './components/exchange-rate/exchange-rate.component';
 
 export const routes: Routes = [
     { path: '', redirectTo: '/chat', pathMatch: 'full' }, // Redirect root to chat
@@ -13,6 +14,7 @@ export const routes: Routes = [
     { path: 'chat', component: ChatComponent, canActivate: [AuthGuard] },
     { path: 'send-money', component: RemittanceFormComponent, canActivate: [AuthGuard] },
     { path: 'deposit', component: DepositFormComponent, canActivate: [AuthGuard] },
+    { path: 'exchange-rates', component: ExchangeRateComponent }, // No auth guard for public rates
     {
         path: 'transaction-confirmation/:id',
         component: TransactionConfirmationComponent,

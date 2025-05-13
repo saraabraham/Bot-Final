@@ -44,10 +44,15 @@
             Send
         </button>
 
-        <button (click)="isListening ? stopVoiceRecognition() : startVoiceRecognition()"
-            [ngClass]="{'active': isListening}" class="voice-button">
-            <i class="fas" [ngClass]="{'fa-microphone': !isListening, 'fa-stop': isListening}"></i>
-            {{ isListening ? 'Stop' : 'Voice' }}
+        <button (click)="voiceButtonClicked()" [ngClass]="{'active': isListening}" class="voice-button">
+            <div class="button-content">
+                <i class="fas" [ngClass]="{'fa-microphone': !isListening, 'fa-stop': isListening}"></i>
+                <span>{{ isListening ? 'Stop' : 'Voice' }}</span>
+            </div>
+            <div *ngIf="isListening" class="recording-indicator">
+                <span class="recording-dot"></span>
+                <span class="recording-text">Recording</span>
+            </div>
         </button>
     </div>
 </div>

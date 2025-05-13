@@ -1,0 +1,331 @@
+.exchange-rate-container {
+    max-width: 800px;
+    margin: 0 auto;
+    background-color: white;
+    border-radius: 8px;
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+    padding: 2rem;
+
+    h2 {
+        margin-bottom: 1.5rem;
+        color: #0066cc;
+        font-weight: 500;
+    }
+
+    h3 {
+        font-size: 1.1rem;
+        color: #333;
+        margin-bottom: 1rem;
+    }
+
+    .popular-pairs {
+        margin-bottom: 2rem;
+
+        .pairs-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+            gap: 1rem;
+
+            .pair-card {
+                background-color: #f5f9ff;
+                border: 1px solid #e0e9f7;
+                border-radius: 6px;
+                padding: 0.8rem 0.5rem;
+                text-align: center;
+                cursor: pointer;
+                transition: all 0.2s;
+
+                &:hover {
+                    background-color: #e0f0ff;
+                    transform: translateY(-2px);
+                }
+
+                &.active {
+                    background-color: #0066cc;
+                    color: white;
+                    border-color: #0066cc;
+                }
+
+                .pair-name {
+                    font-weight: 500;
+                }
+            }
+        }
+    }
+
+    .rate-form {
+        margin-bottom: 2rem;
+        background-color: #f7f9fc;
+        border-radius: 8px;
+        padding: 1.5rem;
+        border: 1px solid #e3e9f2;
+
+        .form-row {
+            display: flex;
+            gap: 1rem;
+            align-items: flex-end;
+
+            @media (max-width: 768px) {
+                flex-direction: column;
+            }
+        }
+
+        .form-group {
+            flex: 1;
+
+            label {
+                display: block;
+                margin-bottom: 0.5rem;
+                font-weight: 500;
+                color: #333;
+            }
+
+            input,
+            select {
+                width: 100%;
+                padding: 0.75rem;
+                border: 1px solid #ddd;
+                border-radius: 4px;
+                font-size: 1rem;
+                transition: border-color 0.2s;
+
+                &:focus {
+                    outline: none;
+                    border-color: #0066cc;
+                    box-shadow: 0 0 0 3px rgba(0, 102, 204, 0.1);
+                }
+            }
+        }
+
+        .swap-button-container {
+            display: flex;
+            align-items: center;
+            padding-bottom: 0.75rem;
+
+            @media (max-width: 768px) {
+                justify-content: center;
+                padding: 0.5rem 0;
+            }
+
+            .swap-button {
+                background-color: #0066cc;
+                color: white;
+                border: none;
+                border-radius: 50%;
+                width: 40px;
+                height: 40px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                cursor: pointer;
+                transition: all 0.2s;
+
+                &:hover {
+                    background-color: #0057b3;
+                    transform: rotate(180deg);
+                }
+            }
+        }
+    }
+
+    .rate-result {
+        margin-bottom: 2rem;
+
+        .rate-header {
+            display: flex;
+            justify-content: space-between;
+            padding-bottom: 1rem;
+            border-bottom: 1px solid #eee;
+
+            .rate-title {
+                font-weight: 500;
+                color: #666;
+            }
+
+            .rate-value {
+                font-weight: 700;
+                color: #0066cc;
+            }
+        }
+
+        .conversion-result {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 2rem 0;
+
+            .result-box {
+                background-color: #f7f9fc;
+                border: 1px solid #e3e9f2;
+                border-radius: 8px;
+                padding: 1.5rem;
+                min-width: 150px;
+                text-align: center;
+
+                &.highlight {
+                    background-color: #e9f7ef;
+                    border-color: #d5f5e3;
+                }
+
+                .amount {
+                    font-size: 1.8rem;
+                    font-weight: 700;
+                    margin-bottom: 0.5rem;
+                }
+
+                .currency {
+                    font-size: 1rem;
+                    color: #666;
+                }
+            }
+
+            .equals-sign {
+                font-size: 2rem;
+                margin: 0 1.5rem;
+                color: #666;
+            }
+        }
+
+        .historical-rates {
+            h3 {
+                margin-bottom: 1rem;
+            }
+
+            .rates-chart {
+                height: 200px;
+                display: flex;
+                flex-direction: column;
+
+                .chart-bars {
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: flex-end;
+                    height: 150px;
+
+                    .chart-bar {
+                        background-color: #0066cc;
+                        width: 40px;
+                        min-height: 20px;
+                        border-radius: 4px 4px 0 0;
+                        position: relative;
+                        transition: all 0.3s;
+
+                        &:hover {
+                            background-color: #0057b3;
+
+                            .bar-tooltip {
+                                opacity: 1;
+                                transform: translateY(0);
+                            }
+                        }
+
+                        .bar-tooltip {
+                            position: absolute;
+                            bottom: 100%;
+                            left: 50%;
+                            transform: translateX(-50%) translateY(10px);
+                            background-color: #333;
+                            color: white;
+                            padding: 0.3rem 0.6rem;
+                            border-radius: 4px;
+                            font-size: 0.8rem;
+                            opacity: 0;
+                            transition: all 0.2s;
+                            white-space: nowrap;
+                            margin-bottom: 5px;
+
+                            &:after {
+                                content: '';
+                                position: absolute;
+                                top: 100%;
+                                left: 50%;
+                                margin-left: -5px;
+                                border-width: 5px;
+                                border-style: solid;
+                                border-color: #333 transparent transparent transparent;
+                            }
+                        }
+                    }
+                }
+
+                .chart-labels {
+                    display: flex;
+                    justify-content: space-between;
+                    margin-top: 10px;
+
+                    .chart-label {
+                        width: 40px;
+                        text-align: center;
+                        font-size: 0.75rem;
+                        color: #666;
+                    }
+                }
+            }
+        }
+    }
+
+    .form-actions {
+        .back-button {
+            background-color: #f2f2f2;
+            color: #333;
+            padding: 0.75rem 1.5rem;
+            border: none;
+            border-radius: 4px;
+            font-size: 1rem;
+            cursor: pointer;
+            transition: background-color 0.2s;
+
+            &:hover {
+                background-color: darken(#f2f2f2, 10%);
+            }
+
+            i {
+                margin-right: 0.5rem;
+            }
+        }
+    }
+
+    .alert {
+        padding: 0.75rem 1rem;
+        margin-bottom: 1rem;
+        border-radius: 4px;
+
+        &.alert-danger {
+            background-color: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+
+        i {
+            margin-right: 0.5rem;
+        }
+    }
+}
+
+@media (max-width: 600px) {
+    .exchange-rate-container {
+        padding: 1.5rem;
+
+        .conversion-result {
+            flex-direction: column;
+
+            .result-box {
+                margin-bottom: 1rem;
+                width: 100%;
+            }
+
+            .equals-sign {
+                margin: 1rem 0;
+            }
+        }
+
+        .historical-rates .rates-chart .chart-bars .chart-bar {
+            width: 30px;
+        }
+
+        .historical-rates .rates-chart .chart-labels .chart-label {
+            width: 30px;
+            font-size: 0.65rem;
+        }
+    }
+}

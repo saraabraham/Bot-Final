@@ -4,11 +4,8 @@
       <h1>Infinora RemitAssist</h1>
     </div>
     <nav>
-      <!-- Only show these navigation links when authenticated -->
+      <!-- Only show logout when authenticated -->
       <ng-container *ngIf="isAuthenticated">
-        <a [routerLink]="['/chat']" routerLinkActive="active">Chat</a>
-        <a [routerLink]="['/send-money']" routerLinkActive="active">Send Money</a>
-        <a [routerLink]="['/deposit']" routerLinkActive="active">Deposit</a>
         <a (click)="logout()" class="logout-link">Logout</a>
       </ng-container>
 

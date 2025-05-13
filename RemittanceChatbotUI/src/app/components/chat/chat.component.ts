@@ -380,6 +380,127 @@ export class ChatComponent implements OnInit, OnDestroy, AfterViewChecked {
             }, 1000);
             return;
         }
+        // Check for "check rates" command
+        const checkRatesMatch = message.trim().toLowerCase() === 'check rates' ||
+            message.trim().toLowerCase() === 'exchange rates' ||
+            message.trim().toLowerCase() === 'rates';
+
+        if (checkRatesMatch) {
+            // Tell the user we're taking them to the exchange rates page
+            this.messages.push({
+                id: Math.random().toString(36).substring(7),
+                text: "I'll help you check exchange rates. Taking you to our exchange rate calculator.",
+                sender: MessageSender.BOT,
+                timestamp: new Date()
+            });
+
+            // Navigate to exchange rates form after a short delay
+            setTimeout(() => {
+                this.router.navigate(['/exchange-rates']);
+            }, 1000);
+            return;
+        }
+
+        // Handle direct currency pair checks
+        const directCurrencyPairMatch = message.match(/(\w{3})\s+(?:to|and)\s+(\w{3})/i);
+        if (directCurrencyPairMatch) {
+            const fromCurrency = directCurrencyPairMatch[1].toUpperCase();
+            const toCurrency = directCurrencyPairMatch[2].toUpperCase();
+
+            // Tell the user we're taking them to the exchange rates page
+            this.messages.push({
+                id: Math.random().toString(36).substring(7),
+                text: `I'll help you check the exchange rate from ${fromCurrency} to ${toCurrency}. Taking you to our exchange rate calculator.`,
+                sender: MessageSender.BOT,
+                timestamp: new Date()
+            });
+
+            // Navigate to exchange rates form with the currencies pre-selected
+            setTimeout(() => {
+                this.router.navigate(['/exchange-rates'], {
+                    queryParams: {
+                        fromCurrency: fromCurrency,
+                        toCurrency: toCurrency
+                    }
+                });
+            }, 1000);
+            return;
+        }
+        // Check for "manage recipients" command
+        const manageRecipientsMatch = message.trim().toLowerCase() === 'manage recipients' ||
+            message.trim().toLowerCase() === 'recipients' ||
+            message.trim().toLowerCase() === 'manage recipient';
+
+        if (manageRecipientsMatch && this.isAuthenticated) {
+            // Display recipient options
+            this.messages.push({
+                id: Math.random().toString(36).substring(7),
+                text: "What would you like to do with your recipients?",
+                sender: MessageSender.BOT,
+                timestamp: new Date(),
+                actions: [
+                    {
+                        text: 'View Recipients',
+                        action: () => this.viewRecipients()
+                    },
+                    {
+                        text: 'Add New Recipient',
+                        action: () => this.addNewRecipient()
+                    }
+                ]
+            });
+            return;
+        }
+
+        // Check for "check transaction status" command
+        const checkStatusMatch = message.trim().toLowerCase() === 'check transaction status' ||
+            message.trim().toLowerCase() === 'transaction status' ||
+            message.trim().toLowerCase() === 'check status';
+
+        if (checkStatusMatch && this.isAuthenticated) {
+            // Display recent transactions
+            this.remittanceService.getTransactionHistory().subscribe({
+                next: (transactions) => {
+                    if (transactions && transactions.length > 0) {
+                        // Show the most recent transaction
+                        const latestTransaction = transactions[0];
+                        this.messages.push({
+                            id: Math.random().toString(36).substring(7),
+                            text: `Your most recent transaction is: ${latestTransaction.amount} ${latestTransaction.currency} to ${latestTransaction.recipient?.name}. Status: ${latestTransaction.status}`,
+                            sender: MessageSender.BOT,
+                            timestamp: new Date(),
+                            actions: [
+                                {
+                                    text: 'View Details',
+                                    action: () => this.router.navigate(['/transaction-confirmation', latestTransaction.id])
+                                },
+                                {
+                                    text: 'View All Transactions',
+                                    action: () => this.viewAllTransactions()
+                                }
+                            ]
+                        });
+                    } else {
+                        this.messages.push({
+                            id: Math.random().toString(36).substring(7),
+                            text: "You don't have any transactions yet.",
+                            sender: MessageSender.BOT,
+                            timestamp: new Date()
+                        });
+                    }
+                },
+                error: (error) => {
+                    console.error('Error retrieving transaction history:', error);
+                    this.messages.push({
+                        id: Math.random().toString(36).substring(7),
+                        text: "I'm having trouble retrieving your transaction history. Please try again later.",
+                        sender: MessageSender.BOT,
+                        timestamp: new Date()
+                    });
+                }
+            });
+            return;
+        }
 
         // If no local handling, send to service for processing
         this.chatService.sendMessage(message).subscribe({
@@ -404,6 +525,8 @@ export class ChatComponent implements OnInit, OnDestroy, AfterViewChecked {
         });
     }
 
+    // Update the voice-related methods in ChatComponent
+
     startVoiceRecognition(): void {
         if (!this.voiceRecognitionSupported) {
             // Show a message to user
@@ -416,49 +539,261 @@ export class ChatComponent implements OnInit, OnDestroy, AfterViewChecked {
             return;
         }
 
-        this.voiceService.start();
+        // Add a listening message
+        const listeningMessageId = Math.random().toString(36).substring(7);
+        this.messages.push({
+            id: listeningMessageId,
+            text: '🎤 Listening... (say your command)',
+            sender: MessageSender.USER,
+            timestamp: new Date()
+        });
+
+        // Scroll to bottom to show the listening message
+        this.scrollToBottom();
+
+        // Clear the last transcript
         this.lastTranscript = '';
-    }
 
+        // Start the voice recognition
+        this.voiceService.start();
+
+        // Listen for transcript
+        this.voiceService.transcript$
+            .pipe(takeUntil(this.destroy$))
+            .subscribe(transcript => {
+                if (transcript && transcript !== this.lastTranscript) {
+                    console.log('Received transcript:', transcript);
+                    this.lastTranscript = transcript;
+
+                    // Update the input field with the transcript
+                    this.newMessage = transcript;
+
+                    // Update the listening message with the transcript
+                    const updatedMessages: ChatMessage[] = [];
+                    for (const msg of this.messages) {
+                        if (msg.id === listeningMessageId) {
+                            updatedMessages.push({
+                                ...msg,
+                                text: `🎤 "${transcript}"`
+                            });
+                        } else {
+                            updatedMessages.push(msg);
+                        }
+                    }
+                    this.messages = updatedMessages;
+
+                    // Scroll to show the updated message
+                    this.scrollToBottom();
+                }
+            });
+    }
     stopVoiceRecognition(): void {
+        console.log('Stopping voice recognition, transcript:', this.lastTranscript);
+
+        // Stop the recognition service
         this.voiceService.stop();
+
+        // Remove the listening message if it exists
+        const updatedMessages: ChatMessage[] = [];
+        for (const msg of this.messages) {
+            if (!msg.text.includes('🎤 Listening...')) {
+                updatedMessages.push(msg);
+            }
+        }
+        this.messages = updatedMessages;
+
+        // Make sure the input field is populated with the transcript
+        if (this.lastTranscript) {
+            this.newMessage = this.lastTranscript;
+
+            // Focus on the input field so the user can see it
+            setTimeout(() => {
+                const inputElement = document.querySelector('.chat-input input') as HTMLInputElement;
+                if (inputElement) {
+                    inputElement.focus();
+                }
+            }, 100);
+        }
     }
 
-    // Process voice command after recognition is complete
+    // New method to process a voice transcript
+    private processVoiceTranscript(transcript: string): void {
+        console.log('Processing voice transcript:', transcript);
+
+        // First make sure the UI is updated to show the transcript
+        const updatedMessages: ChatMessage[] = [];
+        for (const msg of this.messages) {
+            if (msg.text.startsWith('🎤 "') && msg.text.endsWith('"')) {
+                updatedMessages.push({
+                    ...msg,
+                    text: `🎤 "${transcript}"`,  // Ensure it shows the final transcript
+                    isProcessing: false
+                });
+            } else {
+                updatedMessages.push(msg);
+            }
+        }
+        this.messages = updatedMessages;
+
+        // Wait a moment to ensure the UI is updated
+        setTimeout(() => {
+            // Use the transcript as the new message
+            this.newMessage = transcript;
+
+            // Send it through the normal message flow
+            this.sendMessage();
+        }, 1000);
+    }
+    // Update the processVoiceCommand method in chat.component.ts
+
     private processVoiceCommand(): void {
         this.isProcessingVoiceCommand = true;
 
-        // Get the audio blob for backend STT processing
+        // If we have a transcript, simply process it directly as a text message
+        if (this.lastTranscript) {
+            // Set the message text
+            this.newMessage = this.lastTranscript;
+
+            // Send the message through the normal text channel
+            this.sendMessage();
+
+            // Reset
+            this.lastTranscript = '';
+            this.isProcessingVoiceCommand = false;
+            return;
+        }
+
+        // If we don't have a transcript but have audio, send it for processing
         const audioBlob = this.voiceService.getAudioBlob();
         if (audioBlob) {
+            // Show a loading message
+            this.messages.push({
+                id: Math.random().toString(36).substring(7),
+                text: '🎤 Processing voice...',
+                sender: MessageSender.USER,
+                timestamp: new Date()
+            });
+
+            // Process the audio
             this.chatService.processVoiceInput(audioBlob).subscribe({
                 next: (command: BotCommand) => {
                     console.log('Voice command processed:', command);
                     this.isProcessingVoiceCommand = false;
 
-                    // Handle specific intents
-                    if (command.intent === 'check_rates') {
-                        this.handleCheckRates(command.entities);
-                    } else if (command.intent === 'send_money') {
-                        this.handleSendMoney(command.entities);
-                    } else if (command.intent === 'check_balance') {
-                        this.handleCheckBalance();
-                    } else if (command.intent === 'deposit') {
-                        this.handleDeposit(command.entities);
+                    // If we have a transcript, use it
+                    if (command.text) {
+                        // Set the message text
+                        this.newMessage = command.text;
+
+                        // Send the message through the normal text channel
+                        this.sendMessage();
                     }
                 },
                 error: (error: any) => {
                     console.error('Error processing voice command:', error);
                     this.isProcessingVoiceCommand = false;
+
+                    // Add error message
+                    this.messages.push({
+                        id: Math.random().toString(36).substring(7),
+                        text: 'Sorry, I had trouble understanding your voice command. Please try again or type your request.',
+                        sender: MessageSender.BOT,
+                        timestamp: new Date()
+                    });
                 }
             });
-        } else if (this.lastTranscript) {
-            // If we have transcript but no blob, just send as text
-            this.newMessage = this.lastTranscript;
-            this.sendMessage();
+        } else {
             this.isProcessingVoiceCommand = false;
         }
     }
+
+    // Add this method to the ChatComponent
+    // Add a property to track if we've checked mic permission
+    private hasCheckedMicPermission = false;
+
+    // Update to allow silent permission check
+    private async checkMicrophonePermission(silent: boolean = false): Promise<boolean> {
+        try {
+            // Only display messages if not silent
+            if (!silent) {
+                this.messages.push({
+                    id: Math.random().toString(36).substring(7),
+                    text: 'Checking microphone access...',
+                    sender: MessageSender.BOT,
+                    timestamp: new Date()
+                });
+            }
+
+            // Try to get microphone permission
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+            // Release the stream immediately
+            stream.getTracks().forEach(track => track.stop());
+
+            // Display success message if not silent
+            if (!silent) {
+                this.messages.push({
+                    id: Math.random().toString(36).substring(7),
+                    text: '✅ Microphone access granted!',
+                    sender: MessageSender.BOT,
+                    timestamp: new Date()
+                });
+            }
+
+            return true;
+        } catch (err) {
+            console.error('Microphone permission error:', err);
+
+            // Display error message if not silent
+            if (!silent) {
+                this.messages.push({
+                    id: Math.random().toString(36).substring(7),
+                    text: '❌ Could not access microphone. Please check your browser settings and ensure microphone access is allowed.',
+                    sender: MessageSender.BOT,
+                    timestamp: new Date()
+                });
+            }
+
+            return false;
+        }
+    }
+
+
+
+    async voiceButtonClicked(): Promise<void> {
+        console.log('Voice button clicked, current state:', this.isListening ? 'listening' : 'not listening');
+
+        if (this.isListening) {
+            // If already listening, just stop
+            this.stopVoiceRecognition();
+        } else {
+            // Skip permission check if we've already used the microphone
+            if (!this.hasUsedMicrophoneBefore) {
+                try {
+                    // Request microphone permission silently
+                    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                    stream.getTracks().forEach(track => track.stop());
+                    this.hasUsedMicrophoneBefore = true;
+                } catch (err) {
+                    // Show error if permission denied
+                    console.error('Microphone permission error:', err);
+                    this.messages.push({
+                        id: Math.random().toString(36).substring(7),
+                        text: '❌ Please allow microphone access to use voice commands.',
+                        sender: MessageSender.BOT,
+                        timestamp: new Date()
+                    });
+                    return;
+                }
+            }
+
+            // Start voice recognition
+            this.startVoiceRecognition();
+        }
+    }
+
+    // Add a property to track if we've used the microphone before
+    private hasUsedMicrophoneBefore = false;
 
     clearChat(): void {
         this.chatService.clearChat();
@@ -720,5 +1055,91 @@ export class ChatComponent implements OnInit, OnDestroy, AfterViewChecked {
 
         // Clear pending transaction
         this.chatService.clearPendingTransaction();
+    }
+    // Also add these helper methods to the ChatComponent class:
+
+    viewRecipients(): void {
+        // In a real implementation, this would navigate to a recipients page
+        // For now, use the remittance service to fetch and display recipients
+        this.remittanceService.getSavedRecipients().subscribe({
+            next: (recipients) => {
+                if (recipients && recipients.length > 0) {
+                    let recipientsList = "Your saved recipients:\n";
+                    recipients.forEach((recipient, index) => {
+                        recipientsList += `${index + 1}. ${recipient.name} (${recipient.country})\n`;
+                    });
+
+                    this.messages.push({
+                        id: Math.random().toString(36).substring(7),
+                        text: recipientsList,
+                        sender: MessageSender.BOT,
+                        timestamp: new Date()
+                    });
+                } else {
+                    this.messages.push({
+                        id: Math.random().toString(36).substring(7),
+                        text: "You don't have any saved recipients yet.",
+                        sender: MessageSender.BOT,
+                        timestamp: new Date()
+                    });
+                }
+            },
+            error: (error) => {
+                console.error('Error retrieving recipients:', error);
+                this.messages.push({
+                    id: Math.random().toString(36).substring(7),
+                    text: "I'm having trouble retrieving your recipients. Please try again later.",
+                    sender: MessageSender.BOT,
+                    timestamp: new Date()
+                });
+            }
+        });
+    }
+
+    addNewRecipient(): void {
+        // Navigate to the send money form with newRecipient flag
+        this.router.navigate(['/send-money'], {
+            queryParams: {
+                newRecipient: true
+            }
+        });
+    }
+
+    viewAllTransactions(): void {
+        // In a real implementation, this would navigate to a transactions history page
+        // For now, we'll just show the transactions in the chat
+        this.remittanceService.getTransactionHistory().subscribe({
+            next: (transactions) => {
+                if (transactions && transactions.length > 0) {
+                    let transactionList = "Your recent transactions:\n";
+                    transactions.forEach((transaction, index) => {
+                        transactionList += `${index + 1}. ${transaction.amount} ${transaction.currency} to ${transaction.recipient?.name} - Status: ${transaction.status}\n`;
+                    });
+
+                    this.messages.push({
+                        id: Math.random().toString(36).substring(7),
+                        text: transactionList,
+                        sender: MessageSender.BOT,
+                        timestamp: new Date()
+                    });
+                } else {
+                    this.messages.push({
+                        id: Math.random().toString(36).substring(7),
+                        text: "You don't have any transactions yet.",
+                        sender: MessageSender.BOT,
+                        timestamp: new Date()
+                    });
+                }
+            },
+            error: (error) => {
+                console.error('Error retrieving transaction history:', error);
+                this.messages.push({
+                    id: Math.random().toString(36).substring(7),
+                    text: "I'm having trouble retrieving your transaction history. Please try again later.",
+                    sender: MessageSender.BOT,
+                    timestamp: new Date()
+                });
+            }
+        });
     }
 }

@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("RemittanceAPI")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+6bc31278686dca3ff59c1a1d3c02e2b54cc109dc")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+d47aadedeae37e1abac9d48432e3b66abf6d638f")]
 [assembly: System.Reflection.AssemblyProductAttribute("RemittanceAPI")]
 [assembly: System.Reflection.AssemblyTitleAttribute("RemittanceAPI")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

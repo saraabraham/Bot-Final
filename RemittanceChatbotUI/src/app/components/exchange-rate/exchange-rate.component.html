@@ -1,0 +1,96 @@
+<div class="exchange-rate-container">
+    <h2>Currency Exchange Rates</h2>
+
+    <div *ngIf="errorMessage" class="alert alert-danger">
+        <i class="fas fa-exclamation-circle"></i>
+        {{ errorMessage }}
+    </div>
+
+    <!-- Popular currency pairs -->
+    <div class="popular-pairs">
+        <h3>Popular Currency Pairs</h3>
+        <div class="pairs-grid">
+            <div class="pair-card" *ngFor="let pair of popularPairs" (click)="selectPopularPair(pair.from, pair.to)"
+                [class.active]="rateForm.get('fromCurrency')?.value === pair.from && 
+                            rateForm.get('toCurrency')?.value === pair.to">
+                <div class="pair-name">{{ pair.from }}/{{ pair.to }}</div>
+            </div>
+        </div>
+    </div>
+
+    <form [formGroup]="rateForm" class="rate-form">
+        <div class="form-row">
+            <div class="form-group">
+                <label for="amount">Amount</label>
+                <input type="number" id="amount" formControlName="amount" min="0.01" step="0.01">
+            </div>
+
+            <div class="form-group">
+                <label for="fromCurrency">From</label>
+                <select id="fromCurrency" formControlName="fromCurrency">
+                    <option *ngFor="let currency of currencies" [value]="currency">{{ currency }}</option>
+                </select>
+            </div>
+
+            <div class="swap-button-container">
+                <button type="button" class="swap-button" (click)="swapCurrencies()">
+                    <i class="fas fa-exchange-alt"></i>
+                </button>
+            </div>
+
+            <div class="form-group">
+                <label for="toCurrency">To</label>
+                <select id="toCurrency" formControlName="toCurrency">
+                    <option *ngFor="let currency of currencies" [value]="currency">{{ currency }}</option>
+                </select>
+            </div>
+        </div>
+    </form>
+
+    <!-- Results -->
+    <div class="rate-result" *ngIf="exchangeRate !== null">
+        <div class="rate-header">
+            <span class="rate-title">Exchange Rate</span>
+            <span class="rate-value">1 {{ rateForm.get('fromCurrency')?.value }} = {{ exchangeRate | number:'1.4-4' }}
+                {{ rateForm.get('toCurrency')?.value }}</span>
+        </div>
+
+        <div class="conversion-result">
+            <div class="result-box">
+                <div class="amount">{{ fromAmount | number:'1.2-2' }}</div>
+                <div class="currency">{{ rateForm.get('fromCurrency')?.value }}</div>
+            </div>
+
+            <div class="equals-sign">=</div>
+
+            <div class="result-box highlight">
+                <div class="amount">{{ toAmount | number:'1.2-2' }}</div>
+                <div class="currency">{{ rateForm.get('toCurrency')?.value }}</div>
+            </div>
+        </div>
+
+        <!-- Historical Rates Chart -->
+        <div class="historical-rates">
+            <h3>7-Day Rate History</h3>
+            <div class="rates-chart">
+                <div class="chart-bars">
+                    <div class="chart-bar" *ngFor="let rate of historicalRates"
+                        [style.height.%]="(rate.rate / (exchangeRate * 1.05)) * 100">
+                        <div class="bar-tooltip">{{ rate.rate | number:'1.4-4' }}</div>
+                    </div>
+                </div>
+                <div class="chart-labels">
+                    <div class="chart-label" *ngFor="let rate of historicalRates">
+                        {{ rate.date }}
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="form-actions">
+        <button type="button" (click)="goBack()" class="back-button">
+            <i class="fas fa-arrow-left"></i> Back to Chat
+        </button>
+    </div>
+</div>
