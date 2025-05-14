@@ -1,3 +1,5 @@
+// Enhanced deposit-form.component.ts
+
 import { Component, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { ReactiveFormsModule, FormBuilder, FormGroup, Validators } from '@angular/forms';
@@ -61,6 +63,11 @@ export class DepositFormComponent implements OnInit {
             }
             if (params['method']) {
                 this.depositForm.get('paymentMethod')?.setValue(params['method']);
+
+                // If payment method is card, ensure card details validators are applied
+                if (params['method'] === 'card') {
+                    this.applyCardValidators();
+                }
             }
         });
     }
@@ -84,26 +91,38 @@ export class DepositFormComponent implements OnInit {
             currency: ['USD', Validators.required],
             paymentMethod: ['card', Validators.required],
             cardNumber: ['', [Validators.required, Validators.pattern('^[0-9]{16}$')]],
-            expiryDate: ['', [Validators.required, Validators.pattern('^(0[1-9]|1[0-2])\/[0-9]{2}$')]],
+            expiryDate: ['', [Validators.required, Validators.pattern('^(0[1-9]|1[0-2])/[0-9]{2}$')]],
             cvv: ['', [Validators.required, Validators.pattern('^[0-9]{3,4}$')]],
             cardHolderName: ['', Validators.required]
         });
 
         // Show/hide card fields based on payment method
         this.depositForm.get('paymentMethod')?.valueChanges.subscribe(method => {
-            const cardFields = ['cardNumber', 'expiryDate', 'cvv', 'cardHolderName'];
-
             if (method === 'card') {
-                cardFields.forEach(field => {
-                    this.depositForm.get(field)?.setValidators([Validators.required]);
-                    this.depositForm.get(field)?.updateValueAndValidity();
-                });
+                this.applyCardValidators();
             } else {
-                cardFields.forEach(field => {
-                    this.depositForm.get(field)?.clearValidators();
-                    this.depositForm.get(field)?.updateValueAndValidity();
-                });
+                this.clearCardValidators();
             }
+        });
+    }
+
+    // Helper method to apply card validators
+    private applyCardValidators(): void {
+        const cardFields = ['cardNumber', 'expiryDate', 'cvv', 'cardHolderName'];
+
+        cardFields.forEach(field => {
+            this.depositForm.get(field)?.setValidators([Validators.required]);
+            this.depositForm.get(field)?.updateValueAndValidity();
+        });
+    }
+
+    // Helper method to clear card validators
+    private clearCardValidators(): void {
+        const cardFields = ['cardNumber', 'expiryDate', 'cvv', 'cardHolderName'];
+
+        cardFields.forEach(field => {
+            this.depositForm.get(field)?.clearValidators();
+            this.depositForm.get(field)?.updateValueAndValidity();
         });
     }
 
@@ -156,7 +175,7 @@ export class DepositFormComponent implements OnInit {
                             // Add timestamp to make query params unique each time
                             _t: new Date().getTime()
                         },
-                        // This option prevents query parameters from being reused 
+                        // This option prevents query parameters from being reused
                         // when navigating to the same route
                         queryParamsHandling: 'merge'
                     });
@@ -169,7 +188,6 @@ export class DepositFormComponent implements OnInit {
             }
         });
     }
-
 
     // Also update the cancel method
     cancel(): void {

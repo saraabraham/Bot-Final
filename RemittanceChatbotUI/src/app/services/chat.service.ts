@@ -1,7 +1,8 @@
 // chat.service.ts
 import { Injectable, PLATFORM_ID, Inject } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
-import { BehaviorSubject, Observable, of, throwError, catchError, tap, switchMap } from 'rxjs';
+import { BehaviorSubject, Observable, of, throwError } from 'rxjs';
+import { catchError, tap, map } from 'rxjs/operators';
 import { v4 as uuidv4 } from 'uuid';
 import { ChatMessage, MessageSender, BotCommand } from '../models/message.model';
 import { environment } from '../../environments/environment';
@@ -10,6 +11,30 @@ import { RemittanceService, UserBalance } from './remittance.service';
 import { Recipient } from '../models/remittance.model';
 import { AuthService } from './auth.service';
 import { Router } from '@angular/router';
+
+// Define conversation state interface
+export interface ConversationState {
+    flow?: 'send_money' | 'deposit' | 'check_rates' | 'check_balance';
+    step?: string;
+    recipientExists?: boolean;
+    recipientComplete?: boolean;
+    collectingField?: string;
+    tempRecipient?: {
+        name?: string;
+        accountNumber?: string;
+        bankName?: string;
+        country?: string;
+        email?: string;
+        phoneNumber?: string;
+        id?: string;
+    };
+    transactionDetails?: {
+        amount?: number;
+        currency?: string;
+        paymentMethod?: string;
+    };
+    completed?: boolean;
+}
 
 @Injectable({
     providedIn: 'root'
@@ -20,31 +45,15 @@ export class ChatService {
 
     private apiUrl = `${environment.apiUrl}/chat`;
     private isBrowser: boolean;
-    private localStorageKey = 'chat_messages'; // Key for local storage
-    private maxStoredMessages = 50; // Max number of messages to store
+    private localStorageKey = 'chat_messages';
+    private maxStoredMessages = 50;
 
     private userBalance: UserBalance | null = null;
+    private cachedRecipients: Recipient[] = [];
 
-    // Updated pendingTransaction property to include deposit fields
-    private pendingTransaction: {
-        amount?: number;
-        currency?: string;
-        recipient?: string;
-        recipientId?: string;
-        recipientExists?: boolean;
-        recipientComplete?: boolean;
-        isDeposit?: boolean;
-        paymentMethod?: string;
-    } = {};
-
-    // Add conversation state management
-    private conversationState: {
-        expectingRecipient?: boolean;
-        expectingAmount?: boolean;
-        expectingCurrencyPair?: boolean;
-        pendingAction?: 'send' | 'deposit' | 'check_rates';
-        partialData?: any;
-    } = {};
+    // Enhanced conversation state
+    private conversationState = new BehaviorSubject<ConversationState>({});
+    public conversationState$ = this.conversationState.asObservable();
 
     constructor(
         private http: HttpClient,
@@ -77,21 +86,37 @@ export class ChatService {
         // Load user balance if authenticated
         if (this.authService.isAuthenticated) {
             this.loadUserBalance();
+            this.loadRecipients();
         }
 
         // Subscribe to authentication changes
         this.authService.currentUser$.subscribe(user => {
             if (user?.isAuthenticated) {
                 this.loadUserBalance();
+                this.loadRecipients();
             } else {
                 this.userBalance = null;
+                this.cachedRecipients = [];
             }
         });
     }
 
+    // Load recipients into cache
+    private loadRecipients(): void {
+        if (!this.authService.isAuthenticated) return;
 
+        this.remittanceService.getSavedRecipients().subscribe({
+            next: (recipients) => {
+                this.cachedRecipients = recipients;
+                console.log('Recipients loaded to cache:', recipients.length);
+            },
+            error: (error) => {
+                console.error('Error loading recipients to cache:', error);
+            }
+        });
+    }
 
-    // New method to load messages from localStorage
+    // Load messages from localStorage
     private loadMessagesFromStorage(): void {
         if (!this.isBrowser) return;
 
@@ -116,13 +141,10 @@ export class ChatService {
 
     private deduplicateMessages(): void {
         const currentMessages = this.messages.value;
-        if (currentMessages.length <= 1) return; // No need to deduplicate if 0 or 1 message
+        if (currentMessages.length <= 1) return;
 
         // Look for duplicate bot messages (messages with same text close to each other)
         const deduplicatedMessages: ChatMessage[] = [];
-        const seenTexts = new Set<string>();
-
-        // Keep track of the last 3 messages to identify near-duplicates
         const recentMessages: string[] = [];
 
         for (const message of currentMessages) {
@@ -152,8 +174,7 @@ export class ChatService {
         }
     }
 
-
-    // New method to save messages to localStorage
+    // Save messages to localStorage
     private saveMessagesToStorage(messages: ChatMessage[]): void {
         if (!this.isBrowser) return;
 
@@ -216,7 +237,7 @@ export class ChatService {
             });
     }
 
-    private addMessage(message: ChatMessage): void {
+    public addMessage(message: ChatMessage): void {
         const currentMessages = this.messages.value;
         const updatedMessages = [...currentMessages, message];
 
@@ -228,21 +249,58 @@ export class ChatService {
         }
     }
 
-    // Conversation state management methods
-    getConversationState() {
-        return { ...this.conversationState };
+    // Update bot message by ID
+    public updateBotMessage(messageId: string, text: string): void {
+        const currentMessages = this.messages.value;
+        const updatedMessages = currentMessages.map(msg => {
+            if (msg.id === messageId) {
+                return {
+                    ...msg,
+                    text: text,
+                    isProcessing: false
+                };
+            }
+            return msg;
+        });
+        this.messages.next(updatedMessages);
+
+        // Save the updated messages to localStorage
+        this.saveMessagesToStorage(updatedMessages);
     }
 
-    setConversationState(state: any) {
-        this.conversationState = { ...this.conversationState, ...state };
+    // Enhanced conversation state management
+    public getConversationState(): ConversationState {
+        return this.conversationState.value;
     }
 
-    clearConversationState() {
-        this.conversationState = {};
+    public setConversationState(state: Partial<ConversationState>): void {
+        const currentState = this.conversationState.value;
+        this.conversationState.next({ ...currentState, ...state });
     }
 
-    sendMessage(text: string): Observable<BotCommand> {
-        // Add user message to chat
+    public clearConversationState(): void {
+        this.conversationState.next({});
+    }
+
+    // Add clear chat method
+    public clearChat(): void {
+        // Reset messages to just the welcome message
+        const welcomeMessage: ChatMessage = {
+            id: uuidv4(),
+            text: 'Welcome to our remittance chatbot! How can I help you today? You can send money, deposit funds, check rates, check your balance, or manage recipients.',
+            sender: MessageSender.BOT,
+            timestamp: new Date()
+        };
+
+        this.messages.next([welcomeMessage]);
+        this.saveMessagesToStorage([welcomeMessage]);
+
+        // Clear conversation state
+        this.clearConversationState();
+    }
+
+    // Method to add a user message and a loading message from the bot
+    private addUserMessageAndBotLoading(text: string): { userMessageId: string, botMessageId: string } {
         const userMessageId = uuidv4();
         this.addMessage({
             id: userMessageId,
@@ -261,417 +319,1108 @@ export class ChatService {
             isProcessing: true
         });
 
-        // Process message locally first to check for send money intents
-        const sendMoneyMatch = text.match(/(?:send|transfer|remit)\s+(?:(?:\$?\s*)?(\[\d,.\]+))?\s*(?:dollars|euro|pound|usd|eur|gbp)?\s+(?:to\s+)(\w+)/i);
+        return { userMessageId, botMessageId };
+    }
 
-        // Check for deposit intents
-        const depositMatch = text.match(/(deposit|add\s+money|top\s+up)\s+(?:(?:\$?\s*)?(\[\d,.\]+))?\s*(?:dollars|euro|pound|usd|eur|gbp)?/i);
+    // Main method to process user messages
+    public sendMessage(text: string): Observable<BotCommand> {
+        // Add user message and bot loading message
+        const { userMessageId, botMessageId } = this.addUserMessageAndBotLoading(text);
 
-        // Check if this is a send money request and user is authenticated
-        if (sendMoneyMatch && this.authService.isAuthenticated) {
-            console.log('Detected send money intent locally:', sendMoneyMatch);
+        // Check if we're in the middle of a conversation flow
+        const currentState = this.getConversationState();
 
-            const amount = sendMoneyMatch[1] ? parseFloat(sendMoneyMatch[1].replace(/[\$,]/g, '')) : 0;
-            const recipientName = sendMoneyMatch[2];
-
-            // Set pending transaction details
-            this.pendingTransaction = {
-                amount: amount,
-                currency: 'USD', // Default, will be updated from server response if available
-                recipient: recipientName
-            };
-
-            // Process locally with preliminary checks
-            return this.processMoneyTransferIntent(amount, recipientName, botMessageId);
+        // If we're collecting a field in an active flow, process it
+        if (currentState.flow && currentState.collectingField && !text.toLowerCase().includes('cancel')) {
+            return this.processOngoingConversation(text, botMessageId);
         }
 
-        // Check if this is a deposit request and user is authenticated
-        if (depositMatch && this.authService.isAuthenticated) {
-            console.log('Detected deposit intent locally:', depositMatch);
-
-            const amount = depositMatch[2] ? parseFloat(depositMatch[2].replace(/[\$,]/g, '')) : 0;
-
-            // Set pending transaction details for deposit
-            this.pendingTransaction = {
-                amount: amount,
-                currency: 'USD', // Default, will be updated from server response if available
-                isDeposit: true
-            };
-
-            // Process locally with balance check
-            return this.processDepositIntent(amount, botMessageId);
+        // Process initial "send money" command
+        if (this.isSendMoneyCommand(text) && this.authService.isAuthenticated) {
+            return this.processSendMoneyCommand(text, botMessageId);
         }
 
-        // Send to backend for processing
+        // Process "deposit" command
+        if (this.isDepositCommand(text) && this.authService.isAuthenticated) {
+            return this.processDepositCommand(text, botMessageId);
+        }
+
+        // Process "check balance" command
+        if (this.isCheckBalanceCommand(text) && this.authService.isAuthenticated) {
+            return this.processCheckBalanceCommand(botMessageId);
+        }
+
+        // If it's a cancel command in any active flow
+        if (text.toLowerCase().includes('cancel') && currentState.flow) {
+            return this.processCancelCommand(botMessageId);
+        }
+
+        // Default handling with backend
+        return this.sendToBackend(text, botMessageId);
+    }
+
+    // Detect "send money" commands
+    private isSendMoneyCommand(text: string): boolean {
+        const lowercaseText = text.toLowerCase();
+        return (
+            lowercaseText.includes('send money') ||
+            lowercaseText.includes('transfer money') ||
+            lowercaseText.includes('remit money') ||
+            lowercaseText.match(/send .+ to .+/) !== null ||
+            lowercaseText.match(/transfer .+ to .+/) !== null ||
+            lowercaseText.match(/pay .+ to .+/) !== null
+        );
+    }
+
+    // Detect "deposit" commands
+    private isDepositCommand(text: string): boolean {
+        const lowercaseText = text.toLowerCase();
+        return (
+            lowercaseText.includes('deposit') ||
+            lowercaseText.includes('add money') ||
+            lowercaseText.includes('add funds') ||
+            lowercaseText.includes('top up')
+        );
+    }
+
+    // Detect "check balance" commands
+    private isCheckBalanceCommand(text: string): boolean {
+        const lowercaseText = text.toLowerCase();
+        return (
+            lowercaseText.includes('balance') ||
+            lowercaseText.includes('check balance') ||
+            lowercaseText.includes('my funds') ||
+            lowercaseText.includes('how much money do i have')
+        );
+    }
+
+    // Process ongoing conversation in a flow
+    private processOngoingConversation(text: string, botMessageId: string): Observable<BotCommand> {
+        const state = this.getConversationState();
+
+        if (state.flow === 'send_money') {
+            return this.processSendMoneyFlow(text, botMessageId, state);
+        } else if (state.flow === 'deposit') {
+            return this.processDepositFlow(text, botMessageId, state);
+        }
+
+        // Default response if flow isn't recognized
+        const responseText = "I'm not sure what we were discussing. How can I help you today?";
+        this.updateBotMessage(botMessageId, responseText);
+        this.clearConversationState();
+
+        return of({
+            intent: 'unknown',
+            entities: {},
+            confidence: 0,
+            text: responseText
+        });
+    }
+
+    // Process "send money" command
+    private processSendMoneyCommand(text: string, botMessageId: string): Observable<BotCommand> {
+        // Try to extract recipient and amount from the command
+        const sendMoneyMatch = text.match(/(?:send|transfer|remit|pay)(?:\s+(?:\$?\s*)?([\d,.]+))?(?:\s*(?:dollars|euros?|pounds?|usd|eur|gbp))?(?:\s+(?:to|for)\s+)([a-z\s]+)/i);
+
+        let recipientName = '';
+        let amount = 0;
+
+        if (sendMoneyMatch && sendMoneyMatch[2]) {
+            // Extract recipient name
+            recipientName = sendMoneyMatch[2].trim();
+
+            // Extract amount if available
+            if (sendMoneyMatch[1]) {
+                amount = parseFloat(sendMoneyMatch[1].replace(/,/g, ''));
+            }
+        }
+
+        // If we couldn't extract a recipient, ask for one
+        if (!recipientName) {
+            const askRecipientText = "I'll help you send money. Who would you like to send money to?";
+            this.updateBotMessage(botMessageId, askRecipientText);
+
+            // Start the send money flow
+            this.setConversationState({
+                flow: 'send_money',
+                collectingField: 'recipient_name',
+                transactionDetails: amount > 0 ? { amount } : {}
+            });
+
+            return of({
+                intent: 'send_money',
+                entities: {},
+                confidence: 0.9,
+                text: askRecipientText
+            });
+        }
+
+        // If we have a recipient, check if they exist
+        const existingRecipient = this.findRecipientByName(recipientName);
+
+        if (existingRecipient) {
+            // We found the recipient in saved recipients
+            let responseText: string;
+
+            if (amount > 0) {
+                responseText = `I found ${recipientName} in your saved recipients. You want to send ${amount}. What currency would you like to use? (Default is USD)`;
+
+                // Set up conversation state to collect currency
+                this.setConversationState({
+                    flow: 'send_money',
+                    tempRecipient: {
+                        name: recipientName,
+                        id: existingRecipient.id,
+                        accountNumber: existingRecipient.accountNumber || '',
+                        bankName: existingRecipient.bankName || '',
+                        country: existingRecipient.country || '',
+                        email: existingRecipient.email || '',
+                        phoneNumber: existingRecipient.phoneNumber || ''
+                    },
+                    recipientExists: true,
+                    recipientComplete: this.isRecipientComplete(existingRecipient),
+                    transactionDetails: { amount },
+                    collectingField: 'currency'
+                });
+            } else {
+                responseText = `I found ${recipientName} in your saved recipients. How much would you like to send to ${recipientName}?`;
+
+                // Set up conversation state to collect amount
+                this.setConversationState({
+                    flow: 'send_money',
+                    tempRecipient: {
+                        name: recipientName,
+                        id: existingRecipient.id,
+                        accountNumber: existingRecipient.accountNumber || '',
+                        bankName: existingRecipient.bankName || '',
+                        country: existingRecipient.country || '',
+                        email: existingRecipient.email || '',
+                        phoneNumber: existingRecipient.phoneNumber || ''
+                    },
+                    recipientExists: true,
+                    recipientComplete: this.isRecipientComplete(existingRecipient),
+                    collectingField: 'amount'
+                });
+            }
+
+            this.updateBotMessage(botMessageId, responseText);
+
+            return of({
+                intent: 'send_money',
+                entities: {
+                    recipient: recipientName,
+                    recipientExists: true,
+                    amount: amount > 0 ? amount : undefined
+                },
+                confidence: 0.9,
+                text: responseText
+            });
+        } else {
+            // Recipient doesn't exist, start adding a new one
+            let responseText: string;
+
+            if (amount > 0) {
+                responseText = `I'll add ${recipientName} as a new recipient. You want to send ${amount}. First, what is ${recipientName}'s account number?`;
+
+                // Set up conversation state with amount and to collect account number
+                this.setConversationState({
+                    flow: 'send_money',
+                    tempRecipient: { name: recipientName },
+                    recipientExists: false,
+                    transactionDetails: { amount },
+                    collectingField: 'account_number'
+                });
+            } else {
+                responseText = `I'll add ${recipientName} as a new recipient. What is ${recipientName}'s account number?`;
+
+                // Set up conversation state to collect account number
+                this.setConversationState({
+                    flow: 'send_money',
+                    tempRecipient: { name: recipientName },
+                    recipientExists: false,
+                    collectingField: 'account_number'
+                });
+            }
+
+            this.updateBotMessage(botMessageId, responseText);
+
+            return of({
+                intent: 'send_money',
+                entities: {
+                    recipient: recipientName,
+                    recipientExists: false,
+                    amount: amount > 0 ? amount : undefined
+                },
+                confidence: 0.9,
+                text: responseText
+            });
+        }
+    }
+
+    // Process "deposit" command
+    private processDepositCommand(text: string, botMessageId: string): Observable<BotCommand> {
+        // Try to extract amount from the deposit command
+        const depositMatch = text.match(/(?:deposit|add|top\s+up)(?:\s+(?:\$?\s*)?([\d,.]+))?(?:\s*(?:dollars|euros?|pounds?|usd|eur|gbp))?/i);
+
+        let amount = 0;
+
+        if (depositMatch && depositMatch[1]) {
+            // Extract amount if available
+            amount = parseFloat(depositMatch[1].replace(/,/g, ''));
+        }
+
+        // If we couldn't extract an amount, ask for one
+        if (amount <= 0) {
+            const askAmountText = "I'll help you deposit money. How much would you like to deposit?";
+            this.updateBotMessage(botMessageId, askAmountText);
+
+            // Start the deposit flow
+            this.setConversationState({
+                flow: 'deposit',
+                collectingField: 'amount'
+            });
+
+            return of({
+                intent: 'deposit',
+                entities: {},
+                confidence: 0.9,
+                text: askAmountText
+            });
+        } else {
+            // We have an amount, ask for currency
+            const askCurrencyText = `I'll help you deposit ${amount}. What currency would you like to use? (Default is USD)`;
+            this.updateBotMessage(botMessageId, askCurrencyText);
+
+            // Set up conversation state to collect currency
+            this.setConversationState({
+                flow: 'deposit',
+                transactionDetails: { amount },
+                collectingField: 'currency'
+            });
+
+            return of({
+                intent: 'deposit',
+                entities: {
+                    amount: amount
+                },
+                confidence: 0.9,
+                text: askCurrencyText
+            });
+        }
+    }
+
+    // Process "check balance" command
+    private processCheckBalanceCommand(botMessageId: string): Observable<BotCommand> {
+        // If we don't have the balance, fetch it
+        if (!this.userBalance) {
+            this.updateBotMessage(botMessageId, "Let me check your balance...");
+
+            return this.remittanceService.getUserBalance().pipe(
+                tap(balance => {
+                    this.userBalance = balance;
+                    const balanceText = `Your current balance is ${balance.balance} ${balance.currency}.`;
+                    this.updateBotMessage(botMessageId, balanceText);
+                }),
+                map(balance => ({
+                    intent: 'check_balance',
+                    entities: {
+                        balance: balance.balance,
+                        currency: balance.currency
+                    },
+                    confidence: 1.0,
+                    text: `Your current balance is ${balance.balance} ${balance.currency}.`
+                })),
+                catchError(error => {
+                    console.error('Error fetching balance:', error);
+                    const errorText = "I'm sorry, I couldn't retrieve your balance right now. Please try again later.";
+                    this.updateBotMessage(botMessageId, errorText);
+                    return of({
+                        intent: 'check_balance',
+                        entities: {},
+                        confidence: 0.5,
+                        text: errorText
+                    });
+                })
+            );
+        } else {
+            // We already have the balance
+            const balanceText = `Your current balance is ${this.userBalance.balance} ${this.userBalance.currency}.`;
+            this.updateBotMessage(botMessageId, balanceText);
+
+            return of({
+                intent: 'check_balance',
+                entities: {
+                    balance: this.userBalance.balance,
+                    currency: this.userBalance.currency
+                },
+                confidence: 1.0,
+                text: balanceText
+            });
+        }
+    }
+
+    // Process cancel command
+    private processCancelCommand(botMessageId: string): Observable<BotCommand> {
+        const cancelText = "I've cancelled the current operation. Is there anything else I can help you with?";
+        this.updateBotMessage(botMessageId, cancelText);
+
+        // Clear conversation state
+        this.clearConversationState();
+
+        return of({
+            intent: 'cancel',
+            entities: {},
+            confidence: 1.0,
+            text: cancelText
+        });
+    }
+
+    // Process the "send money" flow
+    private processSendMoneyFlow(userInput: string, botMessageId: string, currentState: ConversationState): Observable<BotCommand> {
+        // Get the current field we're collecting
+        const field = currentState.collectingField;
+        const tempRecipient = currentState.tempRecipient || {};
+        const transactionDetails = currentState.transactionDetails || {};
+
+        // Update the state based on which field we're collecting
+        switch (field) {
+            case 'recipient_name':
+                // Collecting recipient name
+                // Check if this recipient exists in saved recipients
+                const recipientName = userInput.trim();
+
+                // Check if recipient exists in our cache
+                const existingRecipient = this.findRecipientByName(recipientName);
+
+                if (existingRecipient) {
+                    // Recipient exists
+                    const responseText = `I found ${recipientName} in your saved recipients. How much would you like to send to ${recipientName}?`;
+                    this.updateBotMessage(botMessageId, responseText);
+
+                    // Update conversation state
+                    this.setConversationState({
+                        tempRecipient: {
+                            ...tempRecipient,
+                            name: recipientName,
+                            id: existingRecipient.id,
+                            accountNumber: existingRecipient.accountNumber || '',
+                            bankName: existingRecipient.bankName || '',
+                            country: existingRecipient.country || '',
+                            email: existingRecipient.email || '',
+                            phoneNumber: existingRecipient.phoneNumber || ''
+                        },
+                        recipientExists: true,
+                        recipientComplete: this.isRecipientComplete(existingRecipient),
+                        collectingField: 'amount'
+                    });
+
+                    return of({
+                        intent: 'send_money',
+                        entities: {
+                            recipient: recipientName,
+                            recipientExists: true
+                        },
+                        confidence: 0.9,
+                        text: responseText
+                    });
+                } else {
+                    // New recipient
+                    const responseText = `I'll add ${recipientName} as a new recipient. What is ${recipientName}'s account number?`;
+                    this.updateBotMessage(botMessageId, responseText);
+
+                    // Update conversation state
+                    this.setConversationState({
+                        tempRecipient: {
+                            ...tempRecipient,
+                            name: recipientName
+                        },
+                        recipientExists: false,
+                        collectingField: 'account_number'
+                    });
+
+                    return of({
+                        intent: 'send_money',
+                        entities: {
+                            recipient: recipientName,
+                            recipientExists: false
+                        },
+                        confidence: 0.9,
+                        text: responseText
+                    });
+                }
+
+            case 'account_number':
+                // Collecting account number for new recipient
+                const accountNumber = userInput.trim();
+                const responseText = `Got it. What is the name of ${tempRecipient.name}'s bank?`;
+                this.updateBotMessage(botMessageId, responseText);
+
+                // Update conversation state
+                this.setConversationState({
+                    tempRecipient: {
+                        ...tempRecipient,
+                        accountNumber: accountNumber
+                    },
+                    collectingField: 'bank_name'
+                });
+
+                return of({
+                    intent: 'send_money',
+                    entities: {
+                        recipient: tempRecipient.name,
+                        accountNumber: accountNumber
+                    },
+                    confidence: 0.9,
+                    text: responseText
+                });
+
+            case 'bank_name':
+                // Collecting bank name for new recipient
+                const bankName = userInput.trim();
+                const countryPrompt = `Got it. In which country is ${tempRecipient.name} located?`;
+                this.updateBotMessage(botMessageId, countryPrompt);
+
+                // Update conversation state
+                this.setConversationState({
+                    tempRecipient: {
+                        ...tempRecipient,
+                        bankName: bankName
+                    },
+                    collectingField: 'country'
+                });
+
+                return of({
+                    intent: 'send_money',
+                    entities: {
+                        recipient: tempRecipient.name,
+                        bankName: bankName
+                    },
+                    confidence: 0.9,
+                    text: countryPrompt
+                });
+
+            case 'country':
+                // Collecting country for new recipient
+                const country = userInput.trim();
+                const emailPrompt = `Got it. What is ${tempRecipient.name}'s email address? (You can say "skip" if you don't want to provide this)`;
+                this.updateBotMessage(botMessageId, emailPrompt);
+
+                // Update conversation state
+                this.setConversationState({
+                    tempRecipient: {
+                        ...tempRecipient,
+                        country: country
+                    },
+                    collectingField: 'email'
+                });
+
+                return of({
+                    intent: 'send_money',
+                    entities: {
+                        recipient: tempRecipient.name,
+                        country: country
+                    },
+                    confidence: 0.9,
+                    text: emailPrompt
+                });
+
+            case 'email':
+                // Collecting email (optional) for new recipient
+                let email = userInput.trim();
+
+                // Check if user wants to skip
+                if (email.toLowerCase() === 'skip') {
+                    email = '';
+                }
+
+                const phonePrompt = `Got it. What is ${tempRecipient.name}'s phone number? (You can say "skip" if you don't want to provide this)`;
+                this.updateBotMessage(botMessageId, phonePrompt);
+
+                // Update conversation state
+                this.setConversationState({
+                    tempRecipient: {
+                        ...tempRecipient,
+                        email: email
+                    },
+                    collectingField: 'phone'
+                });
+
+                return of({
+                    intent: 'send_money',
+                    entities: {
+                        recipient: tempRecipient.name,
+                        email: email
+                    },
+                    confidence: 0.9,
+                    text: phonePrompt
+                });
+
+            case 'phone':
+                // Collecting phone (optional) for new recipient
+                let phoneNumber = userInput.trim();
+
+                // Check if user wants to skip
+                if (phoneNumber.toLowerCase() === 'skip') {
+                    phoneNumber = '';
+                }
+
+                const phonePromptMessage = `Got it. What is ${tempRecipient.name}'s phone number? (You can say "skip" if you don't want to provide this)`;
+                const amountPrompt = `Thank you for providing ${tempRecipient.name}'s details. How much would you like to send to ${tempRecipient.name}?`;
+                this.updateBotMessage(botMessageId, amountPrompt);
+
+                // Update conversation state
+                this.setConversationState({
+                    tempRecipient: {
+                        ...tempRecipient,
+                        phoneNumber: phoneNumber
+                    },
+                    recipientComplete: true,
+                    collectingField: 'amount'
+                });
+
+                return of({
+                    intent: 'send_money',
+                    entities: {
+                        recipient: tempRecipient.name,
+                        phoneNumber: phoneNumber
+                    },
+                    confidence: 0.9,
+                    text: amountPrompt
+                });
+
+            case 'amount':
+                // Collecting amount
+                // Try to parse the amount from the input
+                const amountMatch = userInput.match(/\$?([\d,.]+)/);
+                let amount: number;
+
+                if (amountMatch) {
+                    // Extract amount from regex match
+                    amount = parseFloat(amountMatch[1].replace(/,/g, ''));
+                } else {
+                    // Try parsing the entire input as a number
+                    amount = parseFloat(userInput.replace(/,/g, ''));
+                }
+
+                if (isNaN(amount) || amount <= 0) {
+                    // Invalid amount
+                    const invalidAmountText = "I couldn't understand the amount. Please enter a valid number, like 100 or $50.";
+                    this.updateBotMessage(botMessageId, invalidAmountText);
+
+                    return of({
+                        intent: 'send_money',
+                        entities: {},
+                        confidence: 0.9,
+                        text: invalidAmountText
+                    });
+                }
+
+                // Valid amount, ask for currency
+                const currencyPrompt = `Got it, ${amount}. What currency would you like to use? (Default is USD)`;
+                this.updateBotMessage(botMessageId, currencyPrompt);
+
+                // Update conversation state
+                this.setConversationState({
+                    transactionDetails: {
+                        ...transactionDetails,
+                        amount: amount
+                    },
+                    collectingField: 'currency'
+                });
+
+                return of({
+                    intent: 'send_money',
+                    entities: {
+                        recipient: tempRecipient.name,
+                        amount: amount
+                    },
+                    confidence: 0.9,
+                    text: currencyPrompt
+                });
+
+            case 'currency':
+                // Collecting currency
+                let currency = userInput.trim().toUpperCase();
+
+                // If input is empty or "default", use USD
+                if (!currency || currency.toLowerCase() === 'default' || currency.toLowerCase() === 'usd') {
+                    currency = 'USD';
+                }
+
+                // Standard currency codes should be 3 letters
+                if (!/^[A-Z]{3}$/.test(currency)) {
+                    // Try to map common currency names to codes
+                    const currencyMap: { [key: string]: string } = {
+                        'dollars': 'USD',
+                        'dollar': 'USD',
+                        'usd': 'USD',
+                        'us dollars': 'USD',
+                        'euros': 'EUR',
+                        'euro': 'EUR',
+                        'eur': 'EUR',
+                        'pounds': 'GBP',
+                        'pound': 'GBP',
+                        'gbp': 'GBP',
+                        'sterling': 'GBP'
+                    };
+
+                    currency = currencyMap[userInput.toLowerCase()] || 'USD';
+                }
+
+                const paymentMethodPrompt = `Got it, ${currency}. How would you like to pay? (Options: bank, card, wallet)`;
+                this.updateBotMessage(botMessageId, paymentMethodPrompt);
+
+                // Update conversation state
+                this.setConversationState({
+                    transactionDetails: {
+                        ...transactionDetails,
+                        currency: currency
+                    },
+                    collectingField: 'payment_method'
+                });
+
+                return of({
+                    intent: 'send_money',
+                    entities: {
+                        recipient: tempRecipient.name,
+                        amount: transactionDetails.amount,
+                        currency: currency
+                    },
+                    confidence: 0.9,
+                    text: paymentMethodPrompt
+                });
+
+            case 'payment_method':
+                // Collecting payment method
+                const paymentMethod = userInput.toLowerCase();
+
+                // Verify valid payment method
+                const validMethods = ['bank', 'card', 'wallet'];
+                let method = paymentMethod;
+
+                if (!validMethods.includes(paymentMethod)) {
+                    // Try to map common payment terms
+                    if (paymentMethod.includes('bank') || paymentMethod.includes('transfer')) {
+                        method = 'bank';
+                    } else if (paymentMethod.includes('card') || paymentMethod.includes('credit') || paymentMethod.includes('debit')) {
+                        method = 'card';
+                    } else if (paymentMethod.includes('wallet') || paymentMethod.includes('digital') || paymentMethod.includes('paypal')) {
+                        method = 'wallet';
+                    } else {
+                        // Default to bank
+                        method = 'bank';
+                    }
+                }
+
+                // Prepare for confirmation
+                const confirmationPrompt = this.generateTransactionSummary(tempRecipient, transactionDetails, method);
+                this.updateBotMessage(botMessageId, confirmationPrompt);
+
+                // Update conversation state
+                this.setConversationState({
+                    transactionDetails: {
+                        ...transactionDetails,
+                        paymentMethod: method
+                    },
+                    collectingField: 'confirmation',
+                    completed: false
+                });
+
+                return of({
+                    intent: 'send_money',
+                    entities: {
+                        recipient: tempRecipient.name,
+                        amount: transactionDetails.amount,
+                        currency: transactionDetails.currency,
+                        paymentMethod: method
+                    },
+                    confidence: 0.9,
+                    text: confirmationPrompt
+                });
+
+            case 'confirmation':
+                // Process confirmation
+                const confirmation = userInput.toLowerCase();
+
+                if (confirmation.includes('yes') || confirmation.includes('confirm') || confirmation.includes('proceed') || confirmation.includes('ok')) {
+                    // User confirmed the transaction
+                    const processingText = "Great! I'm preparing your transaction. You'll be redirected to the transaction form with all your details filled in.";
+                    this.updateBotMessage(botMessageId, processingText);
+
+                    // Mark as completed and set up for redirect
+                    this.setConversationState({
+                        completed: true,
+                        collectingField: undefined
+                    });
+
+                    // Redirect to the form with all details
+                    setTimeout(() => {
+                        this.redirectToRemittanceForm(tempRecipient, transactionDetails);
+                    }, 1500);
+
+                    return of({
+                        intent: 'send_money',
+                        entities: {
+                            recipient: tempRecipient.name,
+                            amount: transactionDetails.amount,
+                            currency: transactionDetails.currency,
+                            paymentMethod: transactionDetails.paymentMethod,
+                            confirmed: true
+                        },
+                        confidence: 0.9,
+                        text: processingText
+                    });
+                } else {
+                    // User did not confirm
+                    const cancelText = "Transaction cancelled. Is there anything else I can help you with?";
+                    this.updateBotMessage(botMessageId, cancelText);
+
+                    // Clear conversation state
+                    this.clearConversationState();
+
+                    return of({
+                        intent: 'cancel',
+                        entities: {},
+                        confidence: 0.9,
+                        text: cancelText
+                    });
+                }
+
+            default:
+                // Shouldn't get here if state is properly managed
+                const errorText = "I'm sorry, I lost track of our conversation. Let's start over. How can I help you?";
+                this.updateBotMessage(botMessageId, errorText);
+
+                // Clear conversation state
+                this.clearConversationState();
+
+                return of({
+                    intent: 'error',
+                    entities: {},
+                    confidence: 0.5,
+                    text: errorText
+                });
+        }
+    }
+
+    // Process the "deposit" flow
+    private processDepositFlow(userInput: string, botMessageId: string, currentState: ConversationState): Observable<BotCommand> {
+        // Implementation similar to send money flow but for deposits
+        const field = currentState.collectingField;
+        const transactionDetails = currentState.transactionDetails || {};
+
+        switch (field) {
+            case 'amount':
+                // Parsing amount logic similar to send money flow
+                const amountMatch = userInput.match(/\$?([\d,.]+)/);
+                let amount: number;
+
+                if (amountMatch) {
+                    amount = parseFloat(amountMatch[1].replace(/,/g, ''));
+                } else {
+                    amount = parseFloat(userInput.replace(/,/g, ''));
+                }
+
+                if (isNaN(amount) || amount <= 0) {
+                    const invalidAmountText = "I couldn't understand the amount. Please enter a valid number, like 100 or $50.";
+                    this.updateBotMessage(botMessageId, invalidAmountText);
+
+                    return of({
+                        intent: 'deposit',
+                        entities: {},
+                        confidence: 0.9,
+                        text: invalidAmountText
+                    });
+                }
+
+                const currencyPrompt = `Got it, ${amount}. What currency would you like to use? (Default is USD)`;
+                this.updateBotMessage(botMessageId, currencyPrompt);
+
+                this.setConversationState({
+                    transactionDetails: {
+                        ...transactionDetails,
+                        amount: amount
+                    },
+                    collectingField: 'currency'
+                });
+
+                return of({
+                    intent: 'deposit',
+                    entities: {
+                        amount: amount
+                    },
+                    confidence: 0.9,
+                    text: currencyPrompt
+                });
+
+            case 'currency':
+                // Collecting currency
+                let currency = userInput.trim().toUpperCase();
+
+                // If input is empty or "default", use USD
+                if (!currency || currency.toLowerCase() === 'default' || currency.toLowerCase() === 'usd') {
+                    currency = 'USD';
+                }
+
+                // Standard currency codes should be 3 letters
+                if (!/^[A-Z]{3}$/.test(currency)) {
+                    // Try to map common currency names to codes
+                    const currencyMap: { [key: string]: string } = {
+                        'dollars': 'USD',
+                        'dollar': 'USD',
+                        'usd': 'USD',
+                        'us dollars': 'USD',
+                        'euros': 'EUR',
+                        'euro': 'EUR',
+                        'eur': 'EUR',
+                        'pounds': 'GBP',
+                        'pound': 'GBP',
+                        'gbp': 'GBP',
+                        'sterling': 'GBP'
+                    };
+
+                    currency = currencyMap[userInput.toLowerCase()] || 'USD';
+                }
+
+                const paymentMethodPrompt = `Got it, ${currency}. How would you like to pay for the deposit? (Options: bank, card, wallet)`;
+                this.updateBotMessage(botMessageId, paymentMethodPrompt);
+
+                // Update conversation state
+                this.setConversationState({
+                    transactionDetails: {
+                        ...transactionDetails,
+                        currency: currency
+                    },
+                    collectingField: 'payment_method'
+                });
+
+                return of({
+                    intent: 'deposit',
+                    entities: {
+                        amount: transactionDetails.amount,
+                        currency: currency
+                    },
+                    confidence: 0.9,
+                    text: paymentMethodPrompt
+                });
+
+            case 'payment_method':
+                // Collecting payment method
+                const paymentMethod = userInput.toLowerCase();
+
+                // Verify valid payment method
+                const validMethods = ['bank', 'card', 'wallet'];
+                let method = paymentMethod;
+
+                if (!validMethods.includes(paymentMethod)) {
+                    // Try to map common payment terms
+                    if (paymentMethod.includes('bank') || paymentMethod.includes('transfer')) {
+                        method = 'bank';
+                    } else if (paymentMethod.includes('card') || paymentMethod.includes('credit') || paymentMethod.includes('debit')) {
+                        method = 'card';
+                    } else if (paymentMethod.includes('wallet') || paymentMethod.includes('digital') || paymentMethod.includes('paypal')) {
+                        method = 'wallet';
+                    } else {
+                        // Default to bank
+                        method = 'bank';
+                    }
+                }
+
+                // Generate deposit summary
+                const depositSummary = this.generateDepositSummary(transactionDetails, method);
+                this.updateBotMessage(botMessageId, depositSummary);
+
+                // Update conversation state
+                this.setConversationState({
+                    transactionDetails: {
+                        ...transactionDetails,
+                        paymentMethod: method
+                    },
+                    collectingField: 'confirmation',
+                    completed: false
+                });
+
+                return of({
+                    intent: 'deposit',
+                    entities: {
+                        amount: transactionDetails.amount,
+                        currency: transactionDetails.currency,
+                        paymentMethod: method
+                    },
+                    confidence: 0.9,
+                    text: depositSummary
+                });
+
+            case 'confirmation':
+                // Process confirmation
+                const confirmation = userInput.toLowerCase();
+
+                if (confirmation.includes('yes') || confirmation.includes('confirm') || confirmation.includes('proceed') || confirmation.includes('ok')) {
+                    // User confirmed the deposit
+                    const processingText = "Great! I'm preparing your deposit. You'll be redirected to the deposit form with all your details filled in.";
+                    this.updateBotMessage(botMessageId, processingText);
+
+                    // Mark as completed and set up for redirect
+                    this.setConversationState({
+                        completed: true,
+                        collectingField: undefined
+                    });
+
+                    // Redirect to the deposit form with all details
+                    setTimeout(() => {
+                        this.redirectToDepositForm(transactionDetails);
+                    }, 1500);
+
+                    return of({
+                        intent: 'deposit',
+                        entities: {
+                            amount: transactionDetails.amount,
+                            currency: transactionDetails.currency,
+                            paymentMethod: transactionDetails.paymentMethod,
+                            confirmed: true
+                        },
+                        confidence: 0.9,
+                        text: processingText
+                    });
+                } else {
+                    // User did not confirm
+                    const cancelText = "Deposit cancelled. Is there anything else I can help you with?";
+                    this.updateBotMessage(botMessageId, cancelText);
+
+                    // Clear conversation state
+                    this.clearConversationState();
+
+                    return of({
+                        intent: 'cancel',
+                        entities: {},
+                        confidence: 0.9,
+                        text: cancelText
+                    });
+                }
+
+            default:
+                // Shouldn't get here if state is properly managed
+                const errorText = "I'm sorry, I lost track of our conversation. Let's start over. How can I help you?";
+                this.updateBotMessage(botMessageId, errorText);
+
+                // Clear conversation state
+                this.clearConversationState();
+
+                return of({
+                    intent: 'error',
+                    entities: {},
+                    confidence: 0.5,
+                    text: errorText
+                });
+        }
+    }
+
+    // Send message to backend for processing
+    private sendToBackend(text: string, botMessageId: string): Observable<BotCommand> {
         return this.http.post<BotCommand>(`${this.apiUrl}/message`, { text }).pipe(
             tap(response => {
                 // Update messages to replace the "typing" message with the actual response
-                const currentMessages = this.messages.value;
-                const updatedMessages = currentMessages.map(msg => {
-                    if (msg.id === botMessageId) {
-                        return {
-                            ...msg,
-                            text: response.text || this.generateBotResponse(response),
-                            isProcessing: false
-                        };
-                    }
-                    return msg;
-                });
-                this.messages.next(updatedMessages);
-
-                // Save messages to localStorage after updating
-                this.saveMessagesToStorage(updatedMessages);
-
-                // Save any entities for context
-                if (response.intent === 'send_money' && response.entities) {
-                    if (response.entities['amount']) {
-                        this.pendingTransaction.amount = parseFloat(response.entities['amount'].toString());
-                    }
-                    if (response.entities['currency']) {
-                        this.pendingTransaction.currency = response.entities['currency'].toString();
-                    }
-                    if (response.entities['recipient']) {
-                        this.pendingTransaction.recipient = response.entities['recipient'].toString();
-                    }
-                }
-
-                // Handle deposit intent from server response
-                if (response.intent === 'deposit' && response.entities) {
-                    if (response.entities['amount']) {
-                        this.pendingTransaction.amount = parseFloat(response.entities['amount'].toString());
-                    }
-                    if (response.entities['currency']) {
-                        this.pendingTransaction.currency = response.entities['currency'].toString();
-                    }
-                    if (response.entities['paymentMethod']) {
-                        this.pendingTransaction.paymentMethod = response.entities['paymentMethod'].toString();
-                    }
-                    this.pendingTransaction.isDeposit = true;
-                }
-            })
-        );
-    }
-
-    // New method to handle deposit intent locally
-    private processDepositIntent(amount: number, botMessageId: string): Observable<BotCommand> {
-        // Check if we need to fetch the balance
-        if (!this.userBalance) {
-            return this.remittanceService.getUserBalance().pipe(
-                tap(balance => {
-                    this.userBalance = balance;
-                }),
-                switchMap(balance => this.continueDepositProcessing(amount, botMessageId, balance))
-            );
-        } else {
-            return this.continueDepositProcessing(amount, botMessageId, this.userBalance);
-        }
-    }
-
-    // Continue processing deposit after getting balance
-    private continueDepositProcessing(
-        amount: number,
-        botMessageId: string,
-        balance: UserBalance
-    ): Observable<BotCommand> {
-        const currency = balance.currency;
-
-        // Generate response text
-        const responseText = amount > 0
-            ? `I can help you deposit ${amount} ${currency} to your account. Your current balance is ${balance.balance} ${currency}, and after the deposit it would be ${balance.balance + amount} ${currency}. Would you like to proceed?`
-            : `I can help you deposit money to your account. Your current balance is ${balance.balance} ${currency}. How much would you like to deposit?`;
-
-        // Update bot message
-        this.updateBotMessage(botMessageId, responseText);
-
-        // Create response object
-        const response = {
-            intent: 'deposit',
-            entities: {
-                amount: amount,
-                currency: currency
-            },
-            confidence: 0.9,
-            text: responseText
-        };
-
-        return of(response);
-    }
-
-    // Method to handle money transfer intent locally
-    private processMoneyTransferIntent(amount: number, recipientName: string, botMessageId: string): Observable<BotCommand> {
-        // Check if we need to fetch the balance
-        if (!this.userBalance) {
-            return this.remittanceService.getUserBalance().pipe(
-                tap(balance => {
-                    this.userBalance = balance;
-                }),
-                switchMap(balance => this.continueMoneyTransferProcessing(amount, recipientName, botMessageId, balance))
-            );
-        } else {
-            return this.continueMoneyTransferProcessing(amount, recipientName, botMessageId, this.userBalance);
-        }
-    }
-
-    // Continue processing after getting the balance
-    private continueMoneyTransferProcessing(
-        amount: number,
-        recipientName: string,
-        botMessageId: string,
-        balance: UserBalance
-    ): Observable<BotCommand> {
-        // Calculate approximate fees
-        return this.remittanceService.calculateFees(amount, balance.currency, 'bank').pipe(
-            switchMap(feesResponse => {
-                const fees = feesResponse.fees;
-                const totalAmount = amount + fees;
-
-                // Check if user has sufficient balance
-                if (balance.balance < totalAmount) {
-                    // Insufficient balance
-                    const response = {
-                        intent: 'send_money',
-                        entities: {
-                            amount: amount,
-                            recipient: recipientName,
-                            currency: balance.currency
-                        },
-                        confidence: 0.9,
-                        text: `I'm sorry, you don't have enough balance to send ${amount} ${balance.currency}. ` +
-                            `Your current balance is ${balance.balance} ${balance.currency}, but you need ` +
-                            `${totalAmount} ${balance.currency} (including fees of ${fees} ${balance.currency}).`
-                    };
-
-                    // Update bot message
-                    this.updateBotMessage(botMessageId, response.text);
-                    return of(response);
-                }
-
-                // First get all saved recipients to check if this recipient exists
-                return this.remittanceService.getSavedRecipients().pipe(
-                    switchMap(recipients => {
-                        // Check if recipient exists (case insensitive)
-                        const existingRecipient = recipients.find(r =>
-                            r.name.toLowerCase() === recipientName.toLowerCase());
-
-                        if (!existingRecipient) {
-                            // Recipient doesn't exist, ask if user wants to create a new one
-                            const responseText = `I'd like to send ${amount} ${balance.currency} to ${recipientName}, ` +
-                                `but they're not in your saved recipients list. This would cost a total of ` +
-                                `${totalAmount} ${balance.currency} including fees. ` +
-                                `Would you like to add ${recipientName} as a new recipient?`;
-
-                            const response = {
-                                intent: 'send_money',
-                                entities: {
-                                    amount: amount,
-                                    recipient: recipientName,
-                                    currency: balance.currency,
-                                    fees: fees,
-                                    totalAmount: totalAmount,
-                                    recipientExists: false
-                                },
-                                confidence: 0.9,
-                                text: responseText
-                            };
-
-                            // Update bot message
-                            this.updateBotMessage(botMessageId, responseText);
-
-                            // Store relevant info in pending transaction
-                            this.pendingTransaction = {
-                                amount: amount,
-                                currency: balance.currency,
-                                recipient: recipientName,
-                                recipientExists: false
-                            };
-
-                            return of(response);
-                        }
-
-                        // Recipient exists, check if we need more details
-                        if (!existingRecipient.accountNumber || existingRecipient.country === 'Unknown') {
-                            // Existing recipient but incomplete details
-                            const responseText = `I found ${recipientName} in your recipients list, but their details are incomplete. ` +
-                                `I can send ${amount} ${balance.currency} to them, which will cost a total of ` +
-                                `${totalAmount} ${balance.currency} including fees. ` +
-                                `Would you like to complete their profile first?`;
-
-                            const response = {
-                                intent: 'send_money',
-                                entities: {
-                                    amount: amount,
-                                    recipient: recipientName,
-                                    recipientId: existingRecipient.id,
-                                    currency: balance.currency,
-                                    fees: fees,
-                                    totalAmount: totalAmount,
-                                    recipientExists: true,
-                                    recipientComplete: false
-                                },
-                                confidence: 0.9,
-                                text: responseText
-                            };
-
-                            // Update bot message
-                            this.updateBotMessage(botMessageId, responseText);
-
-                            // Store recipient ID in pending transaction
-                            this.pendingTransaction = {
-                                amount: amount,
-                                currency: balance.currency,
-                                recipient: recipientName,
-                                recipientId: existingRecipient.id,
-                                recipientExists: true,
-                                recipientComplete: false
-                            };
-
-                            return of(response);
-                        }
-
-                        // Existing recipient with complete details
-                        const responseText = `I can send ${amount} ${balance.currency} to your saved recipient ${recipientName}. ` +
-                            `This will cost a total of ${totalAmount} ${balance.currency} including fees of ` +
-                            `${fees} ${balance.currency}. Your balance after this transaction would be ` +
-                            `${balance.balance - totalAmount} ${balance.currency}. ` +
-                            `Shall I proceed with the transfer?`;
-
-                        const response = {
-                            intent: 'send_money',
-                            entities: {
-                                amount: amount,
-                                recipient: recipientName,
-                                recipientId: existingRecipient.id,
-                                currency: balance.currency,
-                                fees: fees,
-                                totalAmount: totalAmount,
-                                recipientExists: true,
-                                recipientComplete: true
-                            },
-                            confidence: 0.9,
-                            text: responseText
-                        };
-
-                        // Update bot message
-                        this.updateBotMessage(botMessageId, responseText);
-
-                        // Store recipient ID in pending transaction
-                        this.pendingTransaction = {
-                            amount: amount,
-                            currency: balance.currency,
-                            recipient: recipientName,
-                            recipientId: existingRecipient.id,
-                            recipientExists: true,
-                            recipientComplete: true
-                        };
-
-                        return of(response);
-                    }),
-                    catchError(error => {
-                        console.error('Error checking recipients:', error);
-                        const errorText = `I had trouble finding information about ${recipientName}. ` +
-                            `Would you like to add them as a new recipient?`;
-
-                        const response = {
-                            intent: 'send_money',
-                            entities: {
-                                amount: amount,
-                                recipient: recipientName,
-                                currency: balance.currency,
-                                recipientExists: false
-                            },
-                            confidence: 0.9,
-                            text: errorText
-                        };
-
-                        this.updateBotMessage(botMessageId, errorText);
-                        return of(response);
-                    })
-                );
+                this.updateBotMessage(botMessageId, response.text || this.generateBotResponse(response));
             }),
             catchError(error => {
-                console.error('Error calculating fees:', error);
-                const errorText = `I'm having trouble processing your request to send money to ${recipientName}. ` +
-                    `Please try again later.`;
-
-                const response = {
-                    intent: 'send_money',
-                    entities: {
-                        amount: amount,
-                        recipient: recipientName
-                    },
-                    confidence: 0.9,
-                    text: errorText
-                };
-
+                console.error('Error sending message to backend:', error);
+                const errorText = "I'm sorry, I'm having trouble processing your request right now. Please try again later.";
                 this.updateBotMessage(botMessageId, errorText);
-                return of(response);
+                return of({
+                    intent: 'error',
+                    entities: {},
+                    confidence: 0,
+                    text: errorText
+                });
             })
         );
     }
 
-    // Helper method to update bot message text
-    private updateBotMessage(messageId: string, text: string): void {
-        const currentMessages = this.messages.value;
-        const updatedMessages = currentMessages.map(msg => {
-            if (msg.id === messageId) {
-                return {
-                    ...msg,
-                    text: text,
-                    isProcessing: false
-                };
+    // Generate a transaction summary for confirmation
+    private generateTransactionSummary(recipient: any, transaction: any, paymentMethod: string): string {
+        const amount = transaction.amount || 0;
+        const currency = transaction.currency || 'USD';
+
+        // Add fees calculation (approximate)
+        const fee = Math.max(amount * 0.01, 1); // 1% fee or minimum $1
+        const total = amount + fee;
+
+        let summary = `I'll help you send ${amount} ${currency} to ${recipient.name} using ${paymentMethod}.\n\n`;
+        summary += `Transaction Summary:\n`;
+        summary += `- Amount: ${amount} ${currency}\n`;
+        summary += `- Recipient: ${recipient.name}\n`;
+        summary += `- Fees: ${fee.toFixed(2)} ${currency}\n`;
+        summary += `- Total: ${total.toFixed(2)} ${currency}\n`;
+        summary += `- Payment Method: ${paymentMethod}\n\n`;
+
+        // Add balance check if we have user balance
+        if (this.userBalance) {
+            const isSameCurrency = this.userBalance.currency === currency;
+
+            if (isSameCurrency) {
+                // Simple comparison if currencies match
+                if (this.userBalance.balance < total) {
+                    summary += `Note: Your balance of ${this.userBalance.balance} ${this.userBalance.currency} is not sufficient for this transaction.\n\n`;
+                } else {
+                    summary += `Your balance after this transaction will be approximately ${(this.userBalance.balance - total).toFixed(2)} ${this.userBalance.currency}.\n\n`;
+                }
+            } else {
+                // Just a general note if currencies don't match
+                summary += `Note: This transaction is in ${currency}, while your account balance is in ${this.userBalance.currency}.\n\n`;
             }
-            return msg;
-        });
-        this.messages.next(updatedMessages);
+        }
 
-        // Save the updated messages to localStorage
-        this.saveMessagesToStorage(updatedMessages);
+        summary += `Would you like to proceed with this transaction?`;
+        return summary;
     }
 
-    processVoiceInput(audioBlob: Blob): Observable<BotCommand> {
-        const formData = new FormData();
-        formData.append('audio', audioBlob);
+    // Generate a deposit summary for confirmation
+    private generateDepositSummary(transaction: any, paymentMethod: string): string {
+        const amount = transaction.amount || 0;
+        const currency = transaction.currency || 'USD';
 
-        // No longer add any messages here - the ChatComponent will handle it
-        // We're just processing the audio and returning the command
+        let summary = `I'll help you deposit ${amount} ${currency} using ${paymentMethod}.\n\n`;
+        summary += `Deposit Summary:\n`;
+        summary += `- Amount: ${amount} ${currency}\n`;
+        summary += `- Payment Method: ${paymentMethod}\n\n`;
 
-        return this.http.post<BotCommand>(`${this.apiUrl}/voice`, formData).pipe(
-            tap(response => {
-                // Just save pending transaction details if needed
+        // Add current balance if available
+        if (this.userBalance) {
+            const isSameCurrency = this.userBalance.currency === currency;
 
-                // For money transfer intent
-                if (response.intent === 'send_money' && this.authService.isAuthenticated) {
-                    if (response.entities && response.entities['amount'] && response.entities['recipient']) {
-                        const amount = parseFloat(response.entities['amount'].toString());
-                        const recipient = response.entities['recipient'].toString();
+            if (isSameCurrency) {
+                summary += `Your balance after this deposit will be approximately ${(this.userBalance.balance + amount).toFixed(2)} ${this.userBalance.currency}.\n\n`;
+            } else {
+                summary += `Note: This deposit is in ${currency}, while your account balance is in ${this.userBalance.currency}.\n\n`;
+            }
+        }
 
-                        // Save pending transaction details
-                        this.pendingTransaction = {
-                            amount: amount,
-                            currency: response.entities['currency']?.toString() || 'USD',
-                            recipient: recipient
-                        };
-                    }
-                }
+        summary += `Would you like to proceed with this deposit?`;
+        return summary;
+    }
 
-                // For deposit intent
-                if (response.intent === 'deposit' && this.authService.isAuthenticated) {
-                    if (response.entities && response.entities['amount']) {
-                        const amount = parseFloat(response.entities['amount'].toString());
+    // Helper method to find a recipient by name
+    private findRecipientByName(name: string): Recipient | null {
+        if (!name || !this.cachedRecipients.length) return null;
 
-                        // Save pending transaction details
-                        this.pendingTransaction = {
-                            amount: amount,
-                            currency: response.entities['currency']?.toString() || 'USD',
-                            isDeposit: true,
-                            paymentMethod: response.entities['paymentMethod']?.toString() || 'card'
-                        };
-                    }
-                }
-            })
+        // Compare case-insensitively
+        const normalizedName = name.toLowerCase().trim();
+        return this.cachedRecipients.find(r =>
+            r.name.toLowerCase().trim() === normalizedName
+        ) || null;
+    }
+
+    // Helper method to check if a recipient has complete details
+    private isRecipientComplete(recipient: Recipient): boolean {
+        return !!(
+            recipient &&
+            recipient.accountNumber &&
+            recipient.bankName &&
+            recipient.country
         );
     }
 
+    // Generate a standard bot response from intent and entities
     private generateBotResponse(command: BotCommand): string {
         // Convert intent and entities into human-readable response
         if (command.intent === 'unknown') {
@@ -717,38 +1466,176 @@ export class ChatService {
         }
     }
 
-    // Update the clearChat method to also clear localStorage
-    clearChat(): void {
-        const welcomeMessage = {
-            id: uuidv4(),
-            text: 'Chat history cleared. How can I help you today?',
-            sender: MessageSender.BOT,
-            timestamp: new Date()
-        };
+    // Redirect to the remittance form with all collected details
+    private redirectToRemittanceForm(recipient: any, transaction: any): void {
+        // Create the query params for the redirect
+        const queryParams: any = {};
 
-        this.messages.next([welcomeMessage]);
+        // Add transaction details
+        if (transaction.amount) queryParams.amount = transaction.amount;
+        if (transaction.currency) queryParams.currency = transaction.currency;
+        if (transaction.paymentMethod) queryParams.paymentMethod = transaction.paymentMethod;
 
-        // Clear localStorage too
-        if (this.isBrowser) {
-            localStorage.removeItem(this.localStorageKey);
+        // Add recipient details
+        if (recipient.name) {
+            queryParams.recipient = recipient.name;
 
-            // Save just the welcome message
-            this.saveMessagesToStorage([welcomeMessage]);
+            if (this.getConversationState().recipientExists && recipient.id) {
+                // If recipient exists, just add the ID
+                queryParams.recipientId = recipient.id;
+            } else {
+                // If new recipient, create new recipient and pass full details
+                queryParams.newRecipient = true;
+
+                // Store the new recipient in local storage to be picked up by the form
+                if (this.isBrowser) {
+                    localStorage.setItem('new_recipient', JSON.stringify({
+                        name: recipient.name,
+                        accountNumber: recipient.accountNumber,
+                        bankName: recipient.bankName,
+                        country: recipient.country,
+                        email: recipient.email,
+                        phoneNumber: recipient.phoneNumber
+                    }));
+                }
+            }
         }
+
+        // Clear conversation state before navigating
+        this.clearConversationState();
+
+        // Navigate to the remittance form
+        this.router.navigate(['/send-money'], { queryParams });
     }
 
-    // Method to get the pending transaction info
-    getPendingTransaction() {
-        return { ...this.pendingTransaction };
+    // Redirect to the deposit form with all collected details
+    private redirectToDepositForm(transaction: any): void {
+        // Create the query params for the redirect
+        const queryParams: any = {};
+
+        // Add transaction details
+        if (transaction.amount) queryParams.amount = transaction.amount;
+        if (transaction.currency) queryParams.currency = transaction.currency;
+        if (transaction.paymentMethod) queryParams.method = transaction.paymentMethod;
+
+        // Clear conversation state before navigating
+        this.clearConversationState();
+
+        // Navigate to the deposit form
+        this.router.navigate(['/deposit'], { queryParams });
     }
 
-    // Method to set the pending transaction info
-    setPendingTransaction(transaction: any) {
-        this.pendingTransaction = { ...this.pendingTransaction, ...transaction };
+    public processVoiceInput(audioBlob: Blob): Observable<BotCommand> {
+        const formData = new FormData();
+        formData.append('audio', audioBlob);
+
+        // Add a temporary bot message showing "typing" state
+        const botMessageId = uuidv4();
+        this.addMessage({
+            id: botMessageId,
+            text: 'Processing your voice input...',
+            sender: MessageSender.BOT,
+            timestamp: new Date(),
+            isProcessing: true
+        });
+
+        return this.http.post<BotCommand>(`${this.apiUrl}/voice`, formData).pipe(
+            tap(response => {
+                // Update the bot message with the response
+                this.updateBotMessage(botMessageId, response.text || this.generateBotResponse(response));
+
+                // Process the intent if needed
+                this.handleBotCommandIntent(response, botMessageId);
+            }),
+            catchError(error => {
+                console.error('Error processing voice input:', error);
+                const errorText = "I'm sorry, I had trouble understanding your voice input. Could you please try again or type your message?";
+                this.updateBotMessage(botMessageId, errorText);
+                return of({
+                    intent: 'error',
+                    entities: {},
+                    confidence: 0,
+                    text: errorText
+                });
+            })
+        );
     }
 
-    // Method to clear the pending transaction info
-    clearPendingTransaction() {
-        this.pendingTransaction = {};
+    // Helper method to handle bot command intents that may need follow-up
+    private handleBotCommandIntent(command: BotCommand, botMessageId: string): void {
+        // If the command is a send money intent with recipient and amount
+        if (command.intent === 'send_money' &&
+            command.entities['recipient'] &&
+            command.entities['amount'] &&
+            this.authService.isAuthenticated) {
+
+            const recipientName = command.entities['recipient'].toString();
+            const amount = parseFloat(command.entities['amount'].toString());
+
+            // Check if this recipient exists
+            const existingRecipient = this.findRecipientByName(recipientName);
+
+            if (existingRecipient) {
+                // Start conversation flow with existing recipient
+                this.setConversationState({
+                    flow: 'send_money',
+                    tempRecipient: {
+                        name: recipientName,
+                        id: existingRecipient.id,
+                        accountNumber: existingRecipient.accountNumber || '',
+                        bankName: existingRecipient.bankName || '',
+                        country: existingRecipient.country || '',
+                        email: existingRecipient.email || '',
+                        phoneNumber: existingRecipient.phoneNumber || ''
+                    },
+                    recipientExists: true,
+                    recipientComplete: this.isRecipientComplete(existingRecipient),
+                    transactionDetails: { amount },
+                    collectingField: 'currency'
+                });
+
+                // Update the message to ask for currency
+                setTimeout(() => {
+                    const followUpText = `I found ${recipientName} in your saved recipients. What currency would you like to use for this transfer? (Default is USD)`;
+                    this.updateBotMessage(botMessageId, followUpText);
+                }, 1000);
+            } else {
+                // Start conversation flow with new recipient
+                this.setConversationState({
+                    flow: 'send_money',
+                    tempRecipient: { name: recipientName },
+                    recipientExists: false,
+                    transactionDetails: { amount },
+                    collectingField: 'account_number'
+                });
+
+                // Update the message to ask for account number
+                setTimeout(() => {
+                    const followUpText = `I'll add ${recipientName} as a new recipient. What is ${recipientName}'s account number?`;
+                    this.updateBotMessage(botMessageId, followUpText);
+                }, 1000);
+            }
+        }
+
+        // If the command is a deposit intent with amount
+        else if (command.intent === 'deposit' &&
+            command.entities['amount'] &&
+            this.authService.isAuthenticated) {
+
+            const amount = parseFloat(command.entities['amount'].toString());
+
+            // Start deposit flow
+            this.setConversationState({
+                flow: 'deposit',
+                transactionDetails: { amount },
+                collectingField: 'currency'
+            });
+
+            // Update the message to ask for currency
+            setTimeout(() => {
+                const followUpText = `What currency would you like to use for this deposit? (Default is USD)`;
+                this.updateBotMessage(botMessageId, followUpText);
+            }, 1000);
+        }
     }
 }

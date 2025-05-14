@@ -1,4 +1,4 @@
-// Fix for remittance-form.component.ts
+// Enhanced remittance-form.component.ts
 
 import { Component, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
@@ -39,6 +39,7 @@ export class RemittanceFormComponent implements OnInit {
     userCurrency = 'USD';
     showBalanceWarning = false;
     preselectedRecipientId = '';
+    newRecipientFromChat: any = null; // Added to store recipient from chat
 
     constructor(
         private fb: FormBuilder,
@@ -69,6 +70,9 @@ export class RemittanceFormComponent implements OnInit {
         this.loadRecipients();
         this.loadUserBalance();
 
+        // Check if we have a new recipient from chat stored in localStorage
+        this.checkForNewRecipientFromChat();
+
         // Get query params if coming from chat
         this.route.queryParams.subscribe(params => {
             if (params['amount']) {
@@ -76,6 +80,9 @@ export class RemittanceFormComponent implements OnInit {
             }
             if (params['currency']) {
                 this.remittanceForm.get('currency')?.setValue(params['currency']);
+            }
+            if (params['paymentMethod']) {
+                this.remittanceForm.get('paymentMethod')?.setValue(params['paymentMethod']);
             }
             if (params['recipient']) {
                 // Will need to match by name once recipients are loaded
@@ -93,34 +100,41 @@ export class RemittanceFormComponent implements OnInit {
                 // Show add recipient form immediately
                 this.showAddRecipient = true;
 
-                // We'll toggle validation after the component initializes
-                setTimeout(() => {
-                    // Don't call toggle directly to avoid toggling the UI state
-                    // Just apply the validations
-                    if (this.showAddRecipient) {
-                        // Remove validation from recipient dropdown
-                        this.remittanceForm.get('recipient')?.clearValidators();
-                        this.remittanceForm.get('recipient')?.setValue('');
-                        this.remittanceForm.get('recipient')?.updateValueAndValidity();
+                // If we have new recipient details from localStorage, fill the form
+                if (this.newRecipientFromChat) {
+                    setTimeout(() => {
+                        this.populateNewRecipientForm(this.newRecipientFromChat);
+                    }, 0);
+                } else {
+                    // We'll toggle validation after the component initializes
+                    setTimeout(() => {
+                        // Don't call toggle directly to avoid toggling the UI state
+                        // Just apply the validations
+                        if (this.showAddRecipient) {
+                            // Remove validation from recipient dropdown
+                            this.remittanceForm.get('recipient')?.clearValidators();
+                            this.remittanceForm.get('recipient')?.setValue('');
+                            this.remittanceForm.get('recipient')?.updateValueAndValidity();
 
-                        // Add validation to new recipient fields
-                        const newRecipientGroup = this.remittanceForm.get('newRecipient') as FormGroup;
-                        newRecipientGroup.get('name')?.setValidators(Validators.required);
-                        newRecipientGroup.get('accountNumber')?.setValidators(Validators.required);
-                        newRecipientGroup.get('bankName')?.setValidators(Validators.required);
-                        newRecipientGroup.get('country')?.setValidators(Validators.required);
+                            // Add validation to new recipient fields
+                            const newRecipientGroup = this.remittanceForm.get('newRecipient') as FormGroup;
+                            newRecipientGroup.get('name')?.setValidators(Validators.required);
+                            newRecipientGroup.get('accountNumber')?.setValidators(Validators.required);
+                            newRecipientGroup.get('bankName')?.setValidators(Validators.required);
+                            newRecipientGroup.get('country')?.setValidators(Validators.required);
 
-                        // Pre-fill the name if available
-                        if (params['recipient']) {
-                            newRecipientGroup.get('name')?.setValue(params['recipient']);
+                            // Pre-fill the name if available
+                            if (params['recipient']) {
+                                newRecipientGroup.get('name')?.setValue(params['recipient']);
+                            }
+
+                            // Update validity
+                            Object.keys(newRecipientGroup.controls).forEach(key => {
+                                newRecipientGroup.get(key)?.updateValueAndValidity();
+                            });
                         }
-
-                        // Update validity
-                        Object.keys(newRecipientGroup.controls).forEach(key => {
-                            newRecipientGroup.get(key)?.updateValueAndValidity();
-                        });
-                    }
-                }, 0);
+                    }, 0);
+                }
             }
 
             // Handle complete recipient flag
@@ -141,6 +155,57 @@ export class RemittanceFormComponent implements OnInit {
 
         this.remittanceForm.get('paymentMethod')?.valueChanges.subscribe(val => {
             this.updateCalculations();
+        });
+    }
+
+    // New method to check for recipient data from chat
+    private checkForNewRecipientFromChat(): void {
+        try {
+            const storedRecipient = localStorage.getItem('new_recipient');
+            if (storedRecipient) {
+                this.newRecipientFromChat = JSON.parse(storedRecipient);
+                console.log('Found new recipient data from chat:', this.newRecipientFromChat);
+
+                // Remove from storage to avoid using it again
+                localStorage.removeItem('new_recipient');
+            }
+        } catch (error) {
+            console.error('Error parsing stored recipient:', error);
+        }
+    }
+
+    // New method to populate the new recipient form with data from chat
+    private populateNewRecipientForm(recipientData: any): void {
+        if (!recipientData) return;
+
+        // Show the add recipient form
+        this.showAddRecipient = true;
+
+        // Remove validation from recipient dropdown
+        this.remittanceForm.get('recipient')?.clearValidators();
+        this.remittanceForm.get('recipient')?.setValue('');
+        this.remittanceForm.get('recipient')?.updateValueAndValidity();
+
+        // Add validation to new recipient fields
+        const newRecipientGroup = this.remittanceForm.get('newRecipient') as FormGroup;
+        newRecipientGroup.get('name')?.setValidators(Validators.required);
+        newRecipientGroup.get('accountNumber')?.setValidators(Validators.required);
+        newRecipientGroup.get('bankName')?.setValidators(Validators.required);
+        newRecipientGroup.get('country')?.setValidators(Validators.required);
+
+        // Populate the form with data
+        newRecipientGroup.patchValue({
+            name: recipientData.name || '',
+            accountNumber: recipientData.accountNumber || '',
+            bankName: recipientData.bankName || '',
+            country: recipientData.country || '',
+            email: recipientData.email || '',
+            phoneNumber: recipientData.phoneNumber || ''
+        });
+
+        // Update validity
+        Object.keys(newRecipientGroup.controls).forEach(key => {
+            newRecipientGroup.get(key)?.updateValueAndValidity();
         });
     }
 
@@ -283,12 +348,15 @@ export class RemittanceFormComponent implements OnInit {
                     if (foundRecipient) {
                         this.remittanceForm.get('recipient')?.setValue(foundRecipient.id);
                     } else {
-                        // If recipient not found, show the add recipient form
-                        this.showAddRecipient = true;
-                        // Pre-fill the name
-                        const newRecipientGroup = this.remittanceForm.get('newRecipient') as FormGroup;
-                        newRecipientGroup.get('name')?.setValue(recipientName);
-                        this.toggleAddRecipient(); // Enable validation
+                        // If recipient not found and we don't have stored recipient data,
+                        // show the add recipient form
+                        if (!this.newRecipientFromChat) {
+                            this.showAddRecipient = true;
+                            // Pre-fill the name
+                            const newRecipientGroup = this.remittanceForm.get('newRecipient') as FormGroup;
+                            newRecipientGroup.get('name')?.setValue(recipientName);
+                            this.toggleAddRecipient(); // Enable validation
+                        }
                     }
                 }
 
@@ -305,6 +373,11 @@ export class RemittanceFormComponent implements OnInit {
             }
         });
     }
+
+    // The rest of the component remains the same...
+
+
+
 
     private initForm(): void {
         // Create form without nested group first
