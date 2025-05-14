@@ -1,3 +1,6 @@
+// In app-routing.module.ts
+// Update the router configuration to use better navigation strategy
+
 import { NgModule } from '@angular/core';
 import { RouterModule, Routes } from '@angular/router';
 import { ChatComponent } from './components/chat/chat.component';
@@ -9,22 +12,56 @@ import { DepositFormComponent } from './components/deposit-form/deposit-form.com
 import { ExchangeRateComponent } from './components/exchange-rate/exchange-rate.component';
 
 export const routes: Routes = [
-    { path: '', redirectTo: '/chat', pathMatch: 'full' }, // Redirect root to chat
-    { path: 'login', component: LoginComponent },
-    { path: 'chat', component: ChatComponent, canActivate: [AuthGuard] },
-    { path: 'send-money', component: RemittanceFormComponent, canActivate: [AuthGuard] },
-    { path: 'deposit', component: DepositFormComponent, canActivate: [AuthGuard] },
-    { path: 'exchange-rates', component: ExchangeRateComponent }, // No auth guard for public rates
+    {
+        path: '',
+        redirectTo: '/chat',
+        pathMatch: 'full'
+    },
+    {
+        path: 'login',
+        component: LoginComponent
+    },
+    {
+        path: 'chat',
+        component: ChatComponent,
+        canActivate: [AuthGuard],
+        // Add this to help preserve component state
+        data: { reuse: true }
+    },
+    {
+        path: 'send-money',
+        component: RemittanceFormComponent,
+        canActivate: [AuthGuard]
+    },
+    {
+        path: 'deposit',
+        component: DepositFormComponent,
+        canActivate: [AuthGuard]
+    },
+    {
+        path: 'exchange-rates',
+        component: ExchangeRateComponent
+    },
     {
         path: 'transaction-confirmation/:id',
         component: TransactionConfirmationComponent,
         canActivate: [AuthGuard]
     },
-    { path: '**', redirectTo: '/chat' } // Redirect unknown paths to chat
+    {
+        path: '**',
+        redirectTo: '/chat'
+    }
 ];
 
 @NgModule({
-    imports: [RouterModule.forRoot(routes, { enableTracing: true })], // Enable tracing for debugging
+    imports: [
+        RouterModule.forRoot(routes, {
+            enableTracing: false, // Set to false for production
+            // Add these options to help preserve navigation state
+            onSameUrlNavigation: 'reload',
+            scrollPositionRestoration: 'enabled'
+        })
+    ],
     exports: [RouterModule]
 })
 export class AppRoutingModule { }

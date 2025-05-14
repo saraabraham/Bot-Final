@@ -13,6 +13,56 @@
 
 <body>
   <app-root></app-root>
+  <script>
+    // SpeechRecognition polyfill and feature detection
+    if (!window.SpeechRecognition && !window.webkitSpeechRecognition) {
+      console.warn('SpeechRecognition API not supported in this browser');
+
+      // Create a simple dummy implementation to prevent errors
+      window.SpeechRecognition = window.webkitSpeechRecognition = function () {
+        this.continuous = false;
+        this.interimResults = false;
+        this.lang = 'en-US';
+        this.onstart = null;
+        this.onresult = null;
+        this.onerror = null;
+        this.onend = null;
+
+        this.start = function () {
+          if (this.onstart) this.onstart();
+
+          // Immediately trigger error for unsupported browser
+          if (this.onerror) {
+            setTimeout(() => {
+              this.onerror({ error: 'not-supported', message: 'Speech recognition not supported in this browser' });
+            }, 100);
+          }
+
+          // Always end quickly
+          if (this.onend) {
+            setTimeout(() => {
+              this.onend();
+            }, 500);
+          }
+        };
+
+        this.stop = function () {
+          if (this.onend) this.onend();
+        };
+      };
+    }
+
+    // Audio performance optimizations
+    if (typeof AudioContext !== 'undefined') {
+      // Pre-initialize audio context to reduce startup time for voice recognition
+      window._audioContext = new AudioContext();
+
+      // Suspend it immediately to save resources
+      if (window._audioContext.state === 'running') {
+        window._audioContext.suspend();
+      }
+    }
+  </script>
 </body>
 
 </html>

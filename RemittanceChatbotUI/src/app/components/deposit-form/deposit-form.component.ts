@@ -146,14 +146,19 @@ export class DepositFormComponent implements OnInit {
                     paymentMethod: 'card'
                 });
 
-                // Navigate to confirmation after a short delay
+                // Navigate to chat after a short delay, preserving component state
                 setTimeout(() => {
                     this.router.navigate(['/chat'], {
                         queryParams: {
                             depositSuccess: true,
                             amount: depositRequest.amount,
-                            currency: depositRequest.currency
-                        }
+                            currency: depositRequest.currency,
+                            // Add timestamp to make query params unique each time
+                            _t: new Date().getTime()
+                        },
+                        // This option prevents query parameters from being reused 
+                        // when navigating to the same route
+                        queryParamsHandling: 'merge'
                     });
                 }, 2000);
             },
@@ -165,7 +170,13 @@ export class DepositFormComponent implements OnInit {
         });
     }
 
+
+    // Also update the cancel method
     cancel(): void {
-        this.router.navigate(['/chat']);
+        // Navigate back to chat without any success parameters
+        this.router.navigate(['/chat'], {
+            // Add timestamp to avoid query param conflicts
+            queryParams: { _t: new Date().getTime() }
+        });
     }
 }

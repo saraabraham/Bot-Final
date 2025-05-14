@@ -344,3 +344,125 @@
         opacity: 0.3;
     }
 }
+
+/* Add to chat.component.scss */
+
+.chat-input {
+    display: flex;
+    padding: 15px;
+    background-color: white;
+    border-top: 1px solid #e0e0e0;
+    flex-shrink: 0;
+
+    .input-wrapper {
+        flex: 1;
+        position: relative;
+        margin-right: 10px;
+
+        /* Add a subtle animation for the listening state */
+        &.listening input {
+            border-color: #e74c3c;
+            background-color: rgba(231, 76, 60, 0.05);
+            padding-right: 110px;
+            /* Make room for the indicator */
+        }
+
+        /* Style for the listening indicator inside the input */
+        .listening-indicator {
+            position: absolute;
+            right: 10px;
+            top: 50%;
+            transform: translateY(-50%);
+            display: flex;
+            align-items: center;
+            color: #e74c3c;
+            font-size: 0.85rem;
+
+            .pulse-dot {
+                width: 8px;
+                height: 8px;
+                border-radius: 50%;
+                background-color: #e74c3c;
+                margin-right: 6px;
+                animation: pulse 1.5s infinite;
+            }
+
+            @keyframes pulse {
+                0% {
+                    transform: scale(0.8);
+                    opacity: 0.5;
+                }
+
+                50% {
+                    transform: scale(1.2);
+                    opacity: 1;
+                }
+
+                100% {
+                    transform: scale(0.8);
+                    opacity: 0.5;
+                }
+            }
+        }
+    }
+
+    input {
+        width: 100%;
+        padding: 12px 15px;
+        border: 1px solid #ddd;
+        border-radius: 25px;
+        font-size: 1rem;
+        transition: all 0.3s ease;
+
+        &:focus {
+            outline: none;
+            border-color: #0066cc;
+        }
+
+        &:disabled {
+            background-color: #f5f5f5;
+        }
+    }
+
+    button {
+        padding: 0 15px;
+        height: 44px;
+        border-radius: 22px;
+        background-color: #0066cc;
+        color: white;
+        border: none;
+        cursor: pointer;
+        margin-left: 5px;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        font-size: 0.9rem;
+
+        i {
+            margin-right: 5px;
+        }
+
+        &:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+
+        &.voice-button {
+            transition: all 0.3s ease;
+
+            &.active {
+                background-color: #e74c3c;
+                /* Red color when active */
+                animation: pulse 1.5s infinite;
+            }
+
+            &:hover:not(:disabled) {
+                background-color: darken(#0066cc, 10%);
+            }
+
+            &.active:hover {
+                background-color: darken(#e74c3c, 10%);
+            }
+        }
+    }
+}

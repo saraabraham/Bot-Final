@@ -4,6 +4,8 @@ import { Observable, throwError } from 'rxjs';
 import { catchError, tap } from 'rxjs/operators';
 import { RemittanceTransaction, Recipient } from '../models/remittance.model';
 import { environment } from '../../environments/environment';
+import { delay, map } from 'rxjs/operators';
+
 
 // Add this interface
 export interface UserBalance {
@@ -188,11 +190,45 @@ export class RemittanceService {
             );
     }
 
-    getTransactionHistory(): Observable<RemittanceTransaction[]> {
-        return this.http.get<RemittanceTransaction[]>(`${this.apiUrl}/history`)
-            .pipe(catchError(this.handleError));
-    }
 
+    getTransactionHistory(): Observable<RemittanceTransaction[]> {
+        console.log('Getting transaction history from real backend');
+
+        // The issue might be that the JWT token doesn't have the 'sub' claim
+        // or it's not being correctly extracted by the backend
+
+        return this.http.get<RemittanceTransaction[]>(`${this.apiUrl}/history`)
+            .pipe(
+                tap(transactions => {
+                    console.log('Transaction history retrieved successfully:', transactions);
+                }),
+                catchError((error: HttpErrorResponse) => {
+                    console.error('Error getting transaction history:', error);
+
+                    if (error.status === 400) {
+                        // The backend is returning BadRequest, likely because it can't find the user ID
+                        // This suggests an issue with how the token is being processed
+                        console.error('Backend error 400 - likely a user ID issue in the token');
+
+                        // Get the error message from the response if available
+                        let errorMsg = 'Transaction history unavailable';
+
+                        if (error.error && typeof error.error === 'object' && error.error.message) {
+                            errorMsg = `Error: ${error.error.message}`;
+                            console.error('Server error message:', error.error.message);
+                        }
+
+                        // Return an empty array and handle it gracefully in the UI
+                        // This prevents a complete failure and shows the user a more helpful message
+                        return ([]);
+                    }
+
+                    return throwError(() => error);
+                }),
+                // Always return an array, even if backend returns null
+                map(transactions => Array.isArray(transactions) ? transactions : [])
+            );
+    }
     getTransactionStatus(id: string): Observable<RemittanceTransaction> {
         return this.http.get<RemittanceTransaction>(`${this.apiUrl}/status/${id}`)
             .pipe(catchError(this.handleError));

@@ -1,4 +1,8 @@
-// In src/app/services/jwt.interceptor.ts
+// Update the jwt.interceptor.ts to add more debugging
+
+// This should be in jwt.interceptor.ts
+// Add logging to debug auth token issues
+
 import { HttpInterceptorFn, HttpRequest, HttpHandlerFn } from '@angular/common/http';
 import { inject } from '@angular/core';
 import { AuthService } from './auth.service';
@@ -15,6 +19,10 @@ export const jwtInterceptor: HttpInterceptorFn = (req: HttpRequest<unknown>, nex
     console.log('JWT Interceptor - Is API URL:', isApiUrl);
     console.log('JWT Interceptor - Token exists:', !!token);
 
+    // Log headers before any modifications
+    console.log('Original request headers:',
+        req.headers.keys().map(k => `${k}: ${req.headers.get(k)}`).join(', '));
+
     if (token && isApiUrl) {
         console.log('JWT Interceptor - Adding Authorization header');
         // FIXED: Ensure proper Bearer format with a space after "Bearer"
@@ -23,8 +31,18 @@ export const jwtInterceptor: HttpInterceptorFn = (req: HttpRequest<unknown>, nex
                 Authorization: `Bearer ${token}`
             }
         });
+
+        // Log updated headers for debugging
+        console.log('Updated request headers:',
+            req.headers.keys().map(k => `${k}: ${req.headers.get(k)}`).join(', '));
     } else {
         console.log('JWT Interceptor - Not adding Authorization header');
+        if (!token) {
+            console.warn('JWT Interceptor - Token is missing');
+        }
+        if (!isApiUrl) {
+            console.log('JWT Interceptor - Not an API URL, no auth header needed');
+        }
     }
 
     return next(req);

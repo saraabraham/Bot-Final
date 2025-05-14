@@ -1,5 +1,4 @@
-// Update the chat.service.ts
-
+// chat.service.ts
 import { Injectable, PLATFORM_ID, Inject } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { BehaviorSubject, Observable, of, throwError, catchError, tap, switchMap } from 'rxjs';
@@ -21,6 +20,8 @@ export class ChatService {
 
     private apiUrl = `${environment.apiUrl}/chat`;
     private isBrowser: boolean;
+    private localStorageKey = 'chat_messages'; // Key for local storage
+    private maxStoredMessages = 50; // Max number of messages to store
 
     private userBalance: UserBalance | null = null;
 
@@ -54,15 +55,23 @@ export class ChatService {
     ) {
         this.isBrowser = isPlatformBrowser(this.platformId);
 
-        // Initialize with welcome message
-        this.addMessage({
-            id: uuidv4(),
-            text: 'Welcome to our remittance chatbot! How can I help you today? You can send money, deposit funds, check rates, check your balance, or manage recipients.',
-            sender: MessageSender.BOT,
-            timestamp: new Date()
-        });
+        // Load messages from localStorage if available
+        this.loadMessagesFromStorage();
 
-        // Load chat history if user is authenticated
+        // If no messages were loaded, initialize with welcome message
+        if (this.messages.value.length === 0) {
+            this.addMessage({
+                id: uuidv4(),
+                text: 'Welcome to our remittance chatbot! How can I help you today? You can send money, deposit funds, check rates, check your balance, or manage recipients.',
+                sender: MessageSender.BOT,
+                timestamp: new Date()
+            });
+        } else {
+            // Deduplicate any messages that might be duplicates
+            this.deduplicateMessages();
+        }
+
+        // Load chat history from server if user is authenticated
         this.loadChatHistory();
 
         // Load user balance if authenticated
@@ -78,6 +87,86 @@ export class ChatService {
                 this.userBalance = null;
             }
         });
+    }
+
+
+
+    // New method to load messages from localStorage
+    private loadMessagesFromStorage(): void {
+        if (!this.isBrowser) return;
+
+        try {
+            const storedMessages = localStorage.getItem(this.localStorageKey);
+            if (storedMessages) {
+                const parsedMessages = JSON.parse(storedMessages);
+
+                // Convert string dates back to Date objects
+                const messages = parsedMessages.map((msg: any) => ({
+                    ...msg,
+                    timestamp: new Date(msg.timestamp)
+                }));
+
+                this.messages.next(messages);
+                console.log('Loaded messages from storage:', messages.length);
+            }
+        } catch (error) {
+            console.error('Error loading messages from localStorage:', error);
+        }
+    }
+
+    private deduplicateMessages(): void {
+        const currentMessages = this.messages.value;
+        if (currentMessages.length <= 1) return; // No need to deduplicate if 0 or 1 message
+
+        // Look for duplicate bot messages (messages with same text close to each other)
+        const deduplicatedMessages: ChatMessage[] = [];
+        const seenTexts = new Set<string>();
+
+        // Keep track of the last 3 messages to identify near-duplicates
+        const recentMessages: string[] = [];
+
+        for (const message of currentMessages) {
+            const key = `${message.text}-${message.sender}`;
+
+            // If this exact message is in the recent history, skip it
+            if (recentMessages.includes(key)) {
+                console.log('Skipping duplicate message:', message.text);
+                continue;
+            }
+
+            // Add to deduplicated list
+            deduplicatedMessages.push(message);
+
+            // Update recent messages (keep only last 3)
+            recentMessages.push(key);
+            if (recentMessages.length > 3) {
+                recentMessages.shift();
+            }
+        }
+
+        // Only update if we actually removed duplicates
+        if (deduplicatedMessages.length < currentMessages.length) {
+            console.log(`Removed ${currentMessages.length - deduplicatedMessages.length} duplicate messages`);
+            this.messages.next(deduplicatedMessages);
+            this.saveMessagesToStorage(deduplicatedMessages);
+        }
+    }
+
+
+    // New method to save messages to localStorage
+    private saveMessagesToStorage(messages: ChatMessage[]): void {
+        if (!this.isBrowser) return;
+
+        try {
+            // Filter out any temporary messages (like listening indicators)
+            const messagesToStore = messages
+                .filter(msg => !msg.isProcessing) // Don't store processing/typing messages
+                .slice(-this.maxStoredMessages); // Limit the number of messages stored
+
+            localStorage.setItem(this.localStorageKey, JSON.stringify(messagesToStore));
+        } catch (error) {
+            console.error('Error saving messages to localStorage:', error);
+        }
     }
 
     private loadUserBalance(): void {
@@ -101,16 +190,24 @@ export class ChatService {
         const token = this.authService.authToken;
         if (!token) return;
 
+        // Only load server history if we don't have any messages yet
+        if (this.messages.value.length > 0) return;
+
         this.http.get<ChatMessage[]>(`${this.apiUrl}/history`)
             .subscribe({
                 next: (history) => {
                     if (history && history.length > 0) {
                         // Replace our welcome message with the actual history
-                        this.messages.next(history.map(msg => ({
+                        const convertedMessages = history.map(msg => ({
                             ...msg,
                             timestamp: new Date(msg.timestamp), // Convert string dates to Date objects
                             sender: msg.sender === 'user' ? MessageSender.USER : MessageSender.BOT
-                        })));
+                        }));
+
+                        this.messages.next(convertedMessages);
+
+                        // Save to localStorage as well
+                        this.saveMessagesToStorage(convertedMessages);
                     }
                 },
                 error: (error) => {
@@ -121,7 +218,14 @@ export class ChatService {
 
     private addMessage(message: ChatMessage): void {
         const currentMessages = this.messages.value;
-        this.messages.next([...currentMessages, message]);
+        const updatedMessages = [...currentMessages, message];
+
+        this.messages.next(updatedMessages);
+
+        // Save to localStorage (only if it's not a temporary message)
+        if (!message.isProcessing) {
+            this.saveMessagesToStorage(updatedMessages);
+        }
     }
 
     // Conversation state management methods
@@ -214,6 +318,9 @@ export class ChatService {
                     return msg;
                 });
                 this.messages.next(updatedMessages);
+
+                // Save messages to localStorage after updating
+                this.saveMessagesToStorage(updatedMessages);
 
                 // Save any entities for context
                 if (response.intent === 'send_money' && response.entities) {
@@ -516,8 +623,10 @@ export class ChatService {
             return msg;
         });
         this.messages.next(updatedMessages);
-    }
 
+        // Save the updated messages to localStorage
+        this.saveMessagesToStorage(updatedMessages);
+    }
 
     processVoiceInput(audioBlob: Blob): Observable<BotCommand> {
         const formData = new FormData();
@@ -561,7 +670,9 @@ export class ChatService {
                 }
             })
         );
-    } private generateBotResponse(command: BotCommand): string {
+    }
+
+    private generateBotResponse(command: BotCommand): string {
         // Convert intent and entities into human-readable response
         if (command.intent === 'unknown') {
             return 'I\'m not sure I understand. Could you rephrase or tell me if you want to send money, deposit funds, check rates, or manage recipients?';
@@ -606,14 +717,24 @@ export class ChatService {
         }
     }
 
+    // Update the clearChat method to also clear localStorage
     clearChat(): void {
-        this.messages.next([]);
-        this.addMessage({
+        const welcomeMessage = {
             id: uuidv4(),
             text: 'Chat history cleared. How can I help you today?',
             sender: MessageSender.BOT,
             timestamp: new Date()
-        });
+        };
+
+        this.messages.next([welcomeMessage]);
+
+        // Clear localStorage too
+        if (this.isBrowser) {
+            localStorage.removeItem(this.localStorageKey);
+
+            // Save just the welcome message
+            this.saveMessagesToStorage([welcomeMessage]);
+        }
     }
 
     // Method to get the pending transaction info

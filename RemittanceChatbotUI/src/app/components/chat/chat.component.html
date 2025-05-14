@@ -36,8 +36,16 @@
     </div>
 
     <div class="chat-input">
-        <input type="text" [(ngModel)]="newMessage" placeholder="Type your message..." (keyup.enter)="sendMessage()"
-            [disabled]="isListening">
+        <div class="input-wrapper" [ngClass]="{'listening': isListening}">
+            <input type="text" [(ngModel)]="newMessage" placeholder="Type your message..." (keyup.enter)="sendMessage()"
+                [disabled]="isListening">
+
+            <!-- Add a mic indicator that shows in the input when listening -->
+            <div class="listening-indicator" *ngIf="isListening">
+                <span class="pulse-dot"></span>
+                <span>Listening...</span>
+            </div>
+        </div>
 
         <button (click)="sendMessage()" [disabled]="!newMessage.trim()" class="send-button">
             <i class="fas fa-paper-plane"></i>

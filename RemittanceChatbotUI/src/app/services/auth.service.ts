@@ -146,4 +146,66 @@ export class AuthService {
         }
         return localStorage.getItem(this.rememberMeKey);
     }
+    // Debug checks for auth.service.ts
+
+    // Add these debugging methods to your auth.service.ts 
+    // (Don't replace the existing methods, just add these new ones)
+
+    // Add this to your AuthService class
+    public checkAuthStatus(): { isAuthenticated: boolean, hasToken: boolean, tokenValue: string } {
+        // Get token from localStorage
+        const token = this.isBrowser ? localStorage.getItem(this.tokenKey) : null;
+
+        // Check if token exists and is not empty
+        const hasToken = !!token && token.length > 10; // Basic check that it's a reasonable token
+
+        // Check if authenticated according to our currentUserSubject
+        const isAuth = !!this.currentUserSubject.value?.isAuthenticated;
+
+        // Return a debug object with auth status info
+        return {
+            isAuthenticated: isAuth,
+            hasToken: hasToken,
+            tokenValue: token ? `${token.substring(0, 10)}...` : 'null'
+        };
+    }
+
+    // Add this to your AuthService class
+    public refreshAuthStatus(): void {
+        // This method should be called if you suspect the auth state is out of sync
+        console.log('Refreshing auth status...');
+
+        // Get current auth status
+        const beforeStatus = this.checkAuthStatus();
+        console.log('Before refresh:', beforeStatus);
+
+        // Check localStorage for token
+        if (this.isBrowser) {
+            const token = localStorage.getItem(this.tokenKey);
+
+            if (token && !this.currentUserSubject.value?.isAuthenticated) {
+                console.log('Found token but not authenticated, updating status...');
+
+                // Create a basic user object
+                const user: User = {
+                    id: 'user_from_token',
+                    name: 'User',
+                    email: 'user@example.com',
+                    isAuthenticated: true
+                };
+
+                // Update current user subject
+                this.currentUserSubject.next(user);
+            } else if (!token && this.currentUserSubject.value?.isAuthenticated) {
+                console.log('No token but marked as authenticated, fixing...');
+
+                // Clear current user
+                this.currentUserSubject.next(null);
+            }
+        }
+
+        // Get updated auth status
+        const afterStatus = this.checkAuthStatus();
+        console.log('After refresh:', afterStatus);
+    }
 }

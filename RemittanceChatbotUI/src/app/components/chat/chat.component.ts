@@ -1,6 +1,4 @@
-// Updated chat.component.ts
-
-import { Component, OnInit, OnDestroy, ViewChild, ElementRef, AfterViewChecked } from '@angular/core';
+import { Component, OnInit, OnDestroy, ViewChild, ElementRef, AfterViewChecked, ChangeDetectorRef } from '@angular/core';
 import { CommonModule, DatePipe } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { RouterModule, Router, ActivatedRoute } from '@angular/router';
@@ -25,6 +23,7 @@ import { AuthService } from '../../services/auth.service';
 })
 export class ChatComponent implements OnInit, OnDestroy, AfterViewChecked {
     @ViewChild('chatMessages') chatMessages!: ElementRef;
+    @ViewChild('messageInput') messageInput!: ElementRef<HTMLInputElement>;
 
     messages: ChatMessage[] = [];
     newMessage = '';
@@ -32,10 +31,14 @@ export class ChatComponent implements OnInit, OnDestroy, AfterViewChecked {
     isAuthenticated = false;
     private destroy$ = new Subject<void>();
 
-    // Add properties for enhanced voice recognition experience
+    // Voice recognition properties
     isProcessingVoiceCommand = false;
     voiceRecognitionSupported = true;
     lastTranscript = '';
+    private hasCheckedMicPermission = false;
+    private hasUsedMicrophoneBefore = false;
+    private currentListeningMessageId: string | null = null;
+    private processedParams = new Set<string>();
 
     constructor(
         private chatService: ChatService,
@@ -43,86 +46,22 @@ export class ChatComponent implements OnInit, OnDestroy, AfterViewChecked {
         private remittanceService: RemittanceService,
         private authService: AuthService,
         private router: Router,
-        private route: ActivatedRoute
+        private route: ActivatedRoute,
+        private cdRef: ChangeDetectorRef
     ) { }
 
     ngOnInit(): void {
-        // Check authentication status
-        this.isAuthenticated = this.authService.isAuthenticated;
-        this.authService.currentUser$
-            .pipe(takeUntil(this.destroy$))
-            .subscribe(user => {
-                this.isAuthenticated = !!user?.isAuthenticated;
-            });
+        // Clear previous subscriptions first
+        this.destroy$.next();
 
-        // Subscribe to messages
-        this.chatService.messages$
-            .pipe(takeUntil(this.destroy$))
-            .subscribe((messages: ChatMessage[]) => {
-                this.messages = messages;
-            });
+        // Set up subscriptions
+        this.initializeSubscriptions();
 
-        // Subscribe to voice recognition status
-        this.voiceService.isListening$
-            .pipe(takeUntil(this.destroy$))
-            .subscribe(isListening => {
-                this.isListening = isListening;
+        // Check browser voice support
+        this.checkVoiceSupport();
 
-                // If stopped listening but have a transcript, process it
-                if (!isListening && this.lastTranscript && !this.isProcessingVoiceCommand) {
-                    this.processVoiceCommand();
-                }
-            });
-
-        // Subscribe to voice transcripts
-        this.voiceService.transcript$
-            .pipe(takeUntil(this.destroy$))
-            .subscribe(transcript => {
-                if (transcript) {
-                    this.newMessage = transcript;
-                    this.lastTranscript = transcript;
-
-                    // Automatically stop listening after getting a transcript
-                    // This makes the experience more natural - say command, it stops listening
-                    if (transcript.toLowerCase().includes('send') ||
-                        transcript.toLowerCase().includes('check balance') ||
-                        transcript.toLowerCase().includes('exchange rate') ||
-                        transcript.toLowerCase().includes('deposit')) {
-                        this.stopVoiceRecognition();
-                    }
-                }
-            });
-
-        // Check for transaction success query params (both deposit and send money)
-        this.route.queryParams
-            .pipe(takeUntil(this.destroy$))
-            .subscribe(params => {
-                // Handle deposit success
-                if (params['depositSuccess'] === 'true' && params['amount'] && params['currency']) {
-                    // Add a success message to the chat
-                    this.messages.push({
-                        id: Math.random().toString(36).substring(7),
-                        text: `Your deposit of ${params['amount']} ${params['currency']} was successful! Your account has been updated.`,
-                        sender: MessageSender.BOT,
-                        timestamp: new Date()
-                    });
-                }
-
-                // Handle send money success (if you have a similar parameter)
-                if (params['transactionSuccess'] === 'true' && params['recipient']) {
-                    // Add a success message to the chat
-                    this.messages.push({
-                        id: Math.random().toString(36).substring(7),
-                        text: `Your money transfer to ${params['recipient']} was successful!`,
-                        sender: MessageSender.BOT,
-                        timestamp: new Date()
-                    });
-                }
-            });
-
-        // Check if browser supports voice recognition
-        const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-        this.voiceRecognitionSupported = !!SpeechRecognition;
+        // Listen for URL parameters
+        this.listenForQueryParams();
     }
 
     ngAfterViewChecked(): void {
@@ -134,286 +73,508 @@ export class ChatComponent implements OnInit, OnDestroy, AfterViewChecked {
         this.destroy$.complete();
     }
 
-    scrollToBottom(): void {
-        try {
-            this.chatMessages.nativeElement.scrollTop =
-                this.chatMessages.nativeElement.scrollHeight;
-        } catch (err) { }
+    // Optimized subscriptions setup - consolidates all subscription logic
+    private initializeSubscriptions(): void {
+        // Authentication status subscription
+        this.authService.currentUser$
+            .pipe(takeUntil(this.destroy$))
+            .subscribe(user => {
+                this.isAuthenticated = !!user?.isAuthenticated;
+            });
+
+        // Chat messages subscription
+        this.chatService.messages$
+            .pipe(takeUntil(this.destroy$))
+            .subscribe((messages: ChatMessage[]) => {
+                this.messages = messages;
+            });
+
+        // Voice recognition status subscription
+        this.voiceService.isListening$
+            .pipe(takeUntil(this.destroy$))
+            .subscribe(isListening => {
+                this.isListening = isListening;
+
+                // When stopped listening but have a transcript, just update the input field
+                if (!isListening && this.lastTranscript && !this.isProcessingVoiceCommand) {
+                    // Just update the input field but don't send
+                    this.newMessage = this.lastTranscript;
+                    this.cdRef.detectChanges();
+
+                    // Clear the listening indicator if it exists
+                    if (this.currentListeningMessageId) {
+                        const currentMessages = this.messages.filter(msg =>
+                            msg.id !== this.currentListeningMessageId
+                        );
+                        this.messages = currentMessages;
+                        this.currentListeningMessageId = null;
+                        this.cdRef.detectChanges();
+                    }
+
+                    // Focus on the input field
+                    setTimeout(() => {
+                        if (this.messageInput?.nativeElement) {
+                            this.messageInput.nativeElement.focus();
+                        }
+                    }, 50);
+
+                    // Clear this so it's not processed again
+                    this.lastTranscript = '';
+                }
+            });
+
+        // Voice transcripts subscription
+        this.voiceService.transcript$
+            .pipe(takeUntil(this.destroy$))
+            .subscribe(transcript => {
+                if (!transcript) return;
+
+                // Set the transcript as the current value in the input field
+                this.newMessage = transcript;
+                this.lastTranscript = transcript;
+
+                // Update the listening message with the transcript
+                this.updateListeningMessage(transcript);
+
+                // Automatically stop listening after getting certain commands
+                if (this.shouldStopListeningForCommand(transcript)) {
+                    this.stopVoiceRecognition();
+                }
+            });
     }
 
-    // Update this part of sendMessage() method in chat.component.ts
-    // Update the sendMessage method in ChatComponent to handle conversation state
 
+    // Check if voice recognition is supported
+    private checkVoiceSupport(): void {
+        const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+        this.voiceRecognitionSupported = !!SpeechRecognition;
+    }
+
+    // Listen for URL query parameters
+    private listenForQueryParams(): void {
+        this.route.queryParams
+            .pipe(takeUntil(this.destroy$))
+            .subscribe(params => {
+                // Extract just the relevant parameters for deduplication
+                const relevantParams = {
+                    depositSuccess: params['depositSuccess'],
+                    transactionSuccess: params['transactionSuccess'],
+                    recipient: params['recipient'],
+                    amount: params['amount'],
+                    currency: params['currency']
+                };
+
+                // Check if we have any success parameters that need to trigger messages
+                const hasSuccessParams =
+                    relevantParams.depositSuccess === 'true' ||
+                    relevantParams.transactionSuccess === 'true';
+
+                if (!hasSuccessParams) {
+                    // If there are no success params, just return - don't process anything
+                    return;
+                }
+
+                // Generate a unique key for these params
+                const paramKey = JSON.stringify(relevantParams);
+
+                // Skip if we've already processed these exact parameters
+                if (this.processedParams.has(paramKey)) {
+                    return;
+                }
+
+                // Handle deposit success
+                if (params['depositSuccess'] === 'true' && params['amount'] && params['currency']) {
+                    this.addBotMessage(
+                        `Your deposit of ${params['amount']} ${params['currency']} was successful! Your account has been updated.`
+                    );
+                    this.processedParams.add(paramKey);
+                }
+
+                // Handle send money success
+                if (params['transactionSuccess'] === 'true' && params['recipient']) {
+                    this.addBotMessage(
+                        `Your money transfer to ${params['recipient']} was successful!`
+                    );
+                    this.processedParams.add(paramKey);
+                }
+
+                // Clear query params to avoid processing them again on subsequent navigations
+                this.router.navigate([], {
+                    relativeTo: this.route,
+                    queryParams: { _t: new Date().getTime() },
+                    queryParamsHandling: 'merge',
+                    replaceUrl: true
+                });
+            });
+    }
+    // Optimized scroll to bottom that reduces jank
+    scrollToBottom(): void {
+        try {
+            if (!this.chatMessages?.nativeElement) return;
+
+            // Don't scroll if the user has manually scrolled up (indicating they're viewing history)
+            const element = this.chatMessages.nativeElement;
+            const isScrolledUp = element.scrollHeight - element.scrollTop - element.clientHeight > 50;
+
+            // Only auto-scroll if user is already at the bottom (or very close)
+            if (!isScrolledUp) {
+                // Use requestAnimationFrame for smoother scrolling
+                requestAnimationFrame(() => {
+                    element.scrollTop = element.scrollHeight;
+                });
+            }
+        } catch (err) {
+            console.error('Scroll error:', err);
+        }
+    }
+
+    // Add a new method that will manually scroll to bottom (for user-initiated actions)
+    scrollToBottomForced(): void {
+        try {
+            if (!this.chatMessages?.nativeElement) return;
+
+            // Force scroll to bottom regardless of current position
+            requestAnimationFrame(() => {
+                const element = this.chatMessages.nativeElement;
+                element.scrollTop = element.scrollHeight;
+            });
+        } catch (err) {
+            console.error('Forced scroll error:', err);
+        }
+    }
+
+
+    // Optimized send message handler
     sendMessage(): void {
+
         if (!this.newMessage.trim()) return;
 
         const message = this.newMessage;
         this.newMessage = '';
+        // Add user message to chat
+        this.addUserMessage(message);
+
+        // Force scroll to bottom when user sends a message
+        this.scrollToBottomForced();
 
         // Add user message to chat
-        const userMessageId = Math.random().toString(36).substring(7);
-        this.messages.push({
-            id: userMessageId,
-            text: message,
-            sender: MessageSender.USER,
-            timestamp: new Date()
-        });
+        this.addUserMessage(message);
 
-        // Check if we're in the middle of a conversation flow
+        // Process conversation state
         const conversationState = this.chatService.getConversationState();
 
-        // If we're expecting a recipient name
+        // Handle recipient expectation
         if (conversationState.expectingRecipient && conversationState.pendingAction === 'send') {
-            // Use the current message as the recipient name
-            const recipientName = message.trim();
-
-            // Clear the conversation state
-            this.chatService.clearConversationState();
-
-            // Set the pending transaction
-            this.chatService.setPendingTransaction({
-                amount: conversationState.partialData?.amount || 0,
-                currency: conversationState.partialData?.currency || 'USD',
-                recipient: recipientName
-            });
-
-            // Add bot confirmation message
-            this.messages.push({
-                id: Math.random().toString(36).substring(7),
-                text: `I'll help you send money to ${recipientName}. Let me take you to the send money form.`,
-                sender: MessageSender.BOT,
-                timestamp: new Date()
-            });
-
-            // Navigate to send money form
-            setTimeout(() => {
-                this.router.navigate(['/send-money'], {
-                    queryParams: {
-                        recipient: recipientName,
-                        amount: conversationState.partialData?.amount || undefined
-                    }
-                });
-            }, 1000);
-
+            this.handleExpectedRecipient(message.trim(), conversationState);
             return;
         }
 
-        // If we're expecting an amount
+        // Handle amount expectation
         if (conversationState.expectingAmount) {
-            // Try to parse the amount from the message
-            const amountMatch = message.match(/\$?(\d+(?:\.\d+)?)/);
-            const amount = amountMatch ? parseFloat(amountMatch[1]) : 0;
-
-            if (amount <= 0) {
-                // If we couldn't parse a valid amount, ask again
-                this.messages.push({
-                    id: Math.random().toString(36).substring(7),
-                    text: "I couldn't understand the amount. Please enter a valid number.",
-                    sender: MessageSender.BOT,
-                    timestamp: new Date()
-                });
-                return;
-            }
-
-            // Handle based on pending action
-            if (conversationState.pendingAction === 'send') {
-                // Now ask for recipient
-                this.chatService.setConversationState({
-                    expectingAmount: false,
-                    expectingRecipient: true,
-                    partialData: {
-                        ...conversationState.partialData,
-                        amount: amount
-                    }
-                });
-
-                this.messages.push({
-                    id: Math.random().toString(36).substring(7),
-                    text: `Great! You want to send $${amount}. Who would you like to send it to?`,
-                    sender: MessageSender.BOT,
-                    timestamp: new Date()
-                });
-                return;
-            } else if (conversationState.pendingAction === 'deposit') {
-                // Clear conversation state
-                this.chatService.clearConversationState();
-
-                // Navigate to deposit form
-                this.messages.push({
-                    id: Math.random().toString(36).substring(7),
-                    text: `I'll help you deposit $${amount} to your account. Taking you to the deposit form.`,
-                    sender: MessageSender.BOT,
-                    timestamp: new Date()
-                });
-
-                setTimeout(() => {
-                    this.router.navigate(['/deposit'], {
-                        queryParams: {
-                            amount: amount
-                        }
-                    });
-                }, 1000);
-                return;
-            }
-        }
-
-        // Process message locally first to check for intents
-        const sendMoneyMatch = message.match(/(?:send|transfer|remit)(?:\s+(?:(?:\$?\s*)?(\d+(?:\.\d+)?))?(?:\s*dollars|\s*euro|\s*pound|\s*usd|\s*eur|\s*gbp)?(?:\s+(?:to\s+)(\w+))?)?/i);
-        const depositMatch = message.match(/(?:deposit|add\s+money|top\s+up)(?:\s+(?:(?:\$?\s*)?(\d+(?:\.\d+)?))?(?:\s*dollars|\s*euro|\s*pound|\s*usd|\s*eur|\s*gbp)?)?/i);
-
-        // Check if this is just the word "deposit"
-        const isSimpleDeposit = message.trim().toLowerCase() === 'deposit';
-
-        // Check if this is just "send money" 
-        const isSimpleSendMoney = message.trim().toLowerCase() === 'send money' ||
-            message.trim().toLowerCase() === 'send';
-
-        // Handle single-word deposit command
-        if ((isSimpleDeposit || depositMatch) && this.isAuthenticated) {
-            console.log('Detected deposit intent locally');
-
-            // Get amount if provided, otherwise ask for amount
-            const amount = depositMatch && depositMatch[1] ?
-                parseFloat(depositMatch[1].replace(/[$,]/g, '')) : 0;
-
-            if (amount > 0) {
-                // Set pending transaction details for deposit
-                this.chatService.setPendingTransaction({
-                    amount: amount,
-                    currency: 'USD',
-                    isDeposit: true
-                });
-
-                // Add confirmation message
-                this.messages.push({
-                    id: Math.random().toString(36).substring(7),
-                    text: `I'll help you deposit $${amount} to your account. Taking you to the deposit form.`,
-                    sender: MessageSender.BOT,
-                    timestamp: new Date()
-                });
-
-                // Redirect to deposit form after a short delay
-                setTimeout(() => {
-                    this.router.navigate(['/deposit'], {
-                        queryParams: {
-                            amount: amount
-                        }
-                    });
-                }, 1000);
-            } else {
-                // Ask for the amount
-                this.chatService.setConversationState({
-                    expectingAmount: true,
-                    pendingAction: 'deposit',
-                    partialData: {}
-                });
-
-                this.messages.push({
-                    id: Math.random().toString(36).substring(7),
-                    text: "How much would you like to deposit?",
-                    sender: MessageSender.BOT,
-                    timestamp: new Date()
-                });
-            }
+            this.handleExpectedAmount(message, conversationState);
             return;
         }
 
-        // Handle simple "send money" command
-        if ((isSimpleSendMoney || sendMoneyMatch) && this.isAuthenticated) {
-            console.log('Detected send money intent locally');
+        // Check for local intents
+        if (this.handleLocalIntents(message)) {
+            return;
+        }
 
-            let amount = 0;
-            let recipientName = '';
+        // If no local handling, send to service for processing
+        this.sendMessageToService(message);
+    }
 
-            // Extract amount and recipient if available
-            if (sendMoneyMatch && sendMoneyMatch[1]) {
-                amount = parseFloat(sendMoneyMatch[1].replace(/[$,]/g, ''));
+    // Helper method to add user message
+    private addUserMessage(text: string): string {
+        const id = Math.random().toString(36).substring(7);
+        const newMessage = {
+            id,
+            text,
+            sender: MessageSender.USER,
+            timestamp: new Date()
+        };
+
+        // Update messages immutably to help with change detection
+        this.messages = [...this.messages, newMessage];
+        this.cdRef.detectChanges();
+
+        return id;
+    }
+
+    // Helper method to add bot message
+    private addBotMessage(text: string, actions: any[] = []): string {
+        const id = Math.random().toString(36).substring(7);
+        const newMessage = {
+            id,
+            text,
+            sender: MessageSender.BOT,
+            timestamp: new Date(),
+            actions
+        };
+
+        // Update messages immutably
+        this.messages = [...this.messages, newMessage];
+        this.cdRef.detectChanges();
+
+        return id;
+    }
+
+    // Handle recipient expected in conversation flow
+    private handleExpectedRecipient(recipientName: string, conversationState: any): void {
+        // Clear the conversation state
+        this.chatService.clearConversationState();
+
+        // Set the pending transaction
+        this.chatService.setPendingTransaction({
+            amount: conversationState.partialData?.amount || 0,
+            currency: conversationState.partialData?.currency || 'USD',
+            recipient: recipientName
+        });
+
+        // Add bot confirmation message
+        this.addBotMessage(
+            `I'll help you send money to ${recipientName}. Let me take you to the send money form.`
+        );
+
+        // Navigate to send money form
+        setTimeout(() => {
+            this.router.navigate(['/send-money'], {
+                queryParams: {
+                    recipient: recipientName,
+                    amount: conversationState.partialData?.amount || undefined
+                }
+            });
+        }, 1000);
+    }
+
+    // Handle amount expected in conversation flow
+    private handleExpectedAmount(message: string, conversationState: any): void {
+        // Try to parse the amount from the message
+        const amountMatch = message.match(/\$?(\d+(?:\.\d+)?)/);
+        const amount = amountMatch ? parseFloat(amountMatch[1]) : 0;
+
+        if (amount <= 0) {
+            // If we couldn't parse a valid amount, ask again
+            this.addBotMessage("I couldn't understand the amount. Please enter a valid number.");
+            return;
+        }
+
+        // Handle based on pending action
+        if (conversationState.pendingAction === 'send') {
+            this.handleSendMoneyAmount(amount, conversationState);
+        } else if (conversationState.pendingAction === 'deposit') {
+            this.handleDepositAmount(amount);
+        }
+    }
+
+    // Handle amount for send money flow
+    private handleSendMoneyAmount(amount: number, conversationState: any): void {
+        // Now ask for recipient
+        this.chatService.setConversationState({
+            expectingAmount: false,
+            expectingRecipient: true,
+            partialData: {
+                ...conversationState.partialData,
+                amount: amount
             }
+        });
 
-            if (sendMoneyMatch && sendMoneyMatch[2]) {
-                recipientName = sendMoneyMatch[2];
-            }
+        this.addBotMessage(
+            `Great! You want to send $${amount}. Who would you like to send it to?`
+        );
+    }
 
-            // For simple commands without recipient, ask for more info
-            if (isSimpleSendMoney || !recipientName) {
-                // Set conversation state to expect recipient
-                this.chatService.setConversationState({
-                    expectingRecipient: true,
-                    pendingAction: 'send',
-                    partialData: {
-                        amount: amount
-                    }
-                });
+    // Handle amount for deposit flow
+    private handleDepositAmount(amount: number): void {
+        // Clear conversation state
+        this.chatService.clearConversationState();
 
-                this.messages.push({
-                    id: Math.random().toString(36).substring(7),
-                    text: "Who would you like to send money to?",
-                    sender: MessageSender.BOT,
-                    timestamp: new Date()
-                });
-                return;
-            }
+        // Navigate to deposit form
+        this.addBotMessage(
+            `I'll help you deposit $${amount} to your account. Taking you to the deposit form.`
+        );
 
-            // If we have recipient, proceed normally
+        setTimeout(() => {
+            this.router.navigate(['/deposit'], {
+                queryParams: {
+                    amount: amount
+                }
+            });
+        }, 1000);
+    }
+
+    // Handle local intents before sending to server
+    private handleLocalIntents(message: string): boolean {
+        // Add this check at the top or with the other checks
+        if (this.isViewHistoryIntent(message) && this.isAuthenticated) {
+            this.handleCheckStatusIntent();
+            return true;
+        }
+
+        // Process deposit intent
+        if (this.isDepositIntent(message) && this.isAuthenticated) {
+            this.handleDepositIntent(message);
+            return true;
+        }
+
+        // Process send money intent
+        if (this.isSendMoneyIntent(message) && this.isAuthenticated) {
+            this.handleSendMoneyIntent(message);
+            return true;
+        }
+
+        // Rest of the method remains the same...
+
+        return false;
+    }
+
+    // Intent detection methods
+    private isDepositIntent(message: string): boolean {
+        const lowercased = message.trim().toLowerCase();
+        return lowercased === 'deposit' ||
+            /(?:deposit|add\s+money|top\s+up)/.test(lowercased);
+    }
+
+    private isSendMoneyIntent(message: string): boolean {
+        const lowercased = message.trim().toLowerCase();
+        return lowercased === 'send money' ||
+            lowercased === 'send' ||
+            /(?:send|transfer|remit)/.test(lowercased);
+    }
+
+    private isCheckRatesIntent(message: string): boolean {
+        const lowercased = message.trim().toLowerCase();
+        return lowercased === 'check rates' ||
+            lowercased === 'exchange rates' ||
+            lowercased === 'rates';
+    }
+
+    private isManageRecipientsIntent(message: string): boolean {
+        const lowercased = message.trim().toLowerCase();
+        return lowercased === 'manage recipients' ||
+            lowercased === 'recipients' ||
+            lowercased === 'manage recipient';
+    }
+
+    private isCheckStatusIntent(message: string): boolean {
+        const lowercased = message.trim().toLowerCase();
+        return lowercased === 'check transaction status' ||
+            lowercased === 'transaction status' ||
+            lowercased === 'check status';
+    }
+
+    // Intent handling methods
+    private handleDepositIntent(message: string): void {
+        console.log('Detected deposit intent locally');
+
+        // Extract amount if provided
+        const depositMatch = message.match(/(?:deposit|add\s+money|top\s+up)(?:\s+(?:(?:\$?\s*)?(\d+(?:\.\d+)?))?(?:\s*dollars|\s*euro|\s*pound|\s*usd|\s*eur|\s*gbp)?)?/i);
+        const amount = depositMatch && depositMatch[1] ?
+            parseFloat(depositMatch[1].replace(/[$,]/g, '')) : 0;
+
+        if (amount > 0) {
+            // Set pending transaction details for deposit
             this.chatService.setPendingTransaction({
                 amount: amount,
                 currency: 'USD',
-                recipient: recipientName
+                isDeposit: true
             });
 
             // Add confirmation message
-            this.messages.push({
-                id: Math.random().toString(36).substring(7),
-                text: `I'll help you send money to ${recipientName}. Taking you to the send money form.`,
-                sender: MessageSender.BOT,
-                timestamp: new Date()
-            });
+            this.addBotMessage(
+                `I'll help you deposit $${amount} to your account. Taking you to the deposit form.`
+            );
 
-            // Navigate to send money form after a short delay
+            // Redirect to deposit form after a short delay
             setTimeout(() => {
-                this.router.navigate(['/send-money'], {
+                this.router.navigate(['/deposit'], {
                     queryParams: {
-                        amount: amount > 0 ? amount : undefined,
-                        recipient: recipientName
+                        amount: amount
                     }
                 });
             }, 1000);
-            return;
-        }
-        // Check for "check rates" command
-        const checkRatesMatch = message.trim().toLowerCase() === 'check rates' ||
-            message.trim().toLowerCase() === 'exchange rates' ||
-            message.trim().toLowerCase() === 'rates';
-
-        if (checkRatesMatch) {
-            // Tell the user we're taking them to the exchange rates page
-            this.messages.push({
-                id: Math.random().toString(36).substring(7),
-                text: "I'll help you check exchange rates. Taking you to our exchange rate calculator.",
-                sender: MessageSender.BOT,
-                timestamp: new Date()
+        } else {
+            // Ask for the amount
+            this.chatService.setConversationState({
+                expectingAmount: true,
+                pendingAction: 'deposit',
+                partialData: {}
             });
 
-            // Navigate to exchange rates form after a short delay
-            setTimeout(() => {
-                this.router.navigate(['/exchange-rates']);
-            }, 1000);
+            this.addBotMessage("How much would you like to deposit?");
+        }
+    }
+
+    private handleSendMoneyIntent(message: string): void {
+        console.log('Detected send money intent locally');
+
+        // Extract amount and recipient
+        const sendMoneyMatch = message.match(/(?:send|transfer|remit)(?:\s+(?:(?:\$?\s*)?(\d+(?:\.\d+)?))?(?:\s*dollars|\s*euro|\s*pound|\s*usd|\s*eur|\s*gbp)?(?:\s+(?:to\s+)(\w+))?)?/i);
+
+        let amount = 0;
+        let recipientName = '';
+
+        if (sendMoneyMatch && sendMoneyMatch[1]) {
+            amount = parseFloat(sendMoneyMatch[1].replace(/[$,]/g, ''));
+        }
+
+        if (sendMoneyMatch && sendMoneyMatch[2]) {
+            recipientName = sendMoneyMatch[2];
+        }
+
+        // For simple commands without recipient, ask for more info
+        if (message.trim().toLowerCase() === 'send money' ||
+            message.trim().toLowerCase() === 'send' ||
+            !recipientName) {
+
+            // Set conversation state to expect recipient
+            this.chatService.setConversationState({
+                expectingRecipient: true,
+                pendingAction: 'send',
+                partialData: {
+                    amount: amount
+                }
+            });
+
+            this.addBotMessage("Who would you like to send money to?");
             return;
         }
 
-        // Handle direct currency pair checks
+        // If we have recipient, proceed normally
+        this.chatService.setPendingTransaction({
+            amount: amount,
+            currency: 'USD',
+            recipient: recipientName
+        });
+
+        // Add confirmation message
+        this.addBotMessage(
+            `I'll help you send money to ${recipientName}. Taking you to the send money form.`
+        );
+
+        // Navigate to send money form after a short delay
+        setTimeout(() => {
+            this.router.navigate(['/send-money'], {
+                queryParams: {
+                    amount: amount > 0 ? amount : undefined,
+                    recipient: recipientName
+                }
+            });
+        }, 1000);
+    }
+
+    private handleCheckRatesIntent(message: string): void {
+        // Check for currency pair
         const directCurrencyPairMatch = message.match(/(\w{3})\s+(?:to|and)\s+(\w{3})/i);
+
         if (directCurrencyPairMatch) {
             const fromCurrency = directCurrencyPairMatch[1].toUpperCase();
             const toCurrency = directCurrencyPairMatch[2].toUpperCase();
 
             // Tell the user we're taking them to the exchange rates page
-            this.messages.push({
-                id: Math.random().toString(36).substring(7),
-                text: `I'll help you check the exchange rate from ${fromCurrency} to ${toCurrency}. Taking you to our exchange rate calculator.`,
-                sender: MessageSender.BOT,
-                timestamp: new Date()
-            });
+            this.addBotMessage(
+                `I'll help you check the exchange rate from ${fromCurrency} to ${toCurrency}. Taking you to our exchange rate calculator.`
+            );
 
             // Navigate to exchange rates form with the currencies pre-selected
             setTimeout(() => {
@@ -424,85 +585,135 @@ export class ChatComponent implements OnInit, OnDestroy, AfterViewChecked {
                     }
                 });
             }, 1000);
-            return;
+        } else {
+            // Generic rates request
+            this.addBotMessage(
+                "I'll help you check exchange rates. Taking you to our exchange rate calculator."
+            );
+
+            // Navigate to exchange rates form after a short delay
+            setTimeout(() => {
+                this.router.navigate(['/exchange-rates']);
+            }, 1000);
         }
-        // Check for "manage recipients" command
-        const manageRecipientsMatch = message.trim().toLowerCase() === 'manage recipients' ||
-            message.trim().toLowerCase() === 'recipients' ||
-            message.trim().toLowerCase() === 'manage recipient';
+    }
 
-        if (manageRecipientsMatch && this.isAuthenticated) {
-            // Display recipient options
-            this.messages.push({
-                id: Math.random().toString(36).substring(7),
-                text: "What would you like to do with your recipients?",
-                sender: MessageSender.BOT,
-                timestamp: new Date(),
-                actions: [
-                    {
-                        text: 'View Recipients',
-                        action: () => this.viewRecipients()
-                    },
-                    {
-                        text: 'Add New Recipient',
-                        action: () => this.addNewRecipient()
-                    }
-                ]
-            });
-            return;
-        }
+    private handleManageRecipientsIntent(): void {
+        // Display recipient options
+        this.addBotMessage(
+            "What would you like to do with your recipients?",
+            [
+                {
+                    text: 'View Recipients',
+                    action: () => this.viewRecipients()
+                },
+                {
+                    text: 'Add New Recipient',
+                    action: () => this.addNewRecipient()
+                }
+            ]
+        );
+    }
 
-        // Check for "check transaction status" command
-        const checkStatusMatch = message.trim().toLowerCase() === 'check transaction status' ||
-            message.trim().toLowerCase() === 'transaction status' ||
-            message.trim().toLowerCase() === 'check status';
+    private handleCheckStatusIntent(): void {
+        // Check auth state first
+        this.checkAuth();
 
-        if (checkStatusMatch && this.isAuthenticated) {
-            // Display recent transactions
-            this.remittanceService.getTransactionHistory().subscribe({
+        // First, add a processing message
+        const processingMessageId = this.addBotMessage("Checking your transaction history...");
+
+        // Force scroll to bottom for this message
+        this.scrollToBottomForced();
+
+        console.log('Auth state when retrieving transactions:', this.isAuthenticated);
+        console.log('Calling remittanceService.getTransactionHistory()');
+
+        // Display recent transactions with better error handling
+        this.remittanceService.getTransactionHistory()
+            .subscribe({
                 next: (transactions) => {
+                    console.log('Got transaction history response:', transactions);
+
+                    // Remove the processing message
+                    this.messages = this.messages.filter(msg => msg.id !== processingMessageId);
+
                     if (transactions && transactions.length > 0) {
-                        // Show the most recent transaction
-                        const latestTransaction = transactions[0];
-                        this.messages.push({
-                            id: Math.random().toString(36).substring(7),
-                            text: `Your most recent transaction is: ${latestTransaction.amount} ${latestTransaction.currency} to ${latestTransaction.recipient?.name}. Status: ${latestTransaction.status}`,
-                            sender: MessageSender.BOT,
-                            timestamp: new Date(),
-                            actions: [
+                        // Show the transactions in a formatted way
+                        let transactionList = "Your recent transactions:\n\n";
+                        transactions.forEach((transaction, index) => {
+                            // Safely handle date formatting - make sure it's a valid date
+                            let dateStr = 'Unknown date';
+                            try {
+                                const date = new Date(transaction.createdAt);
+                                if (!isNaN(date.getTime())) {
+                                    dateStr = date.toLocaleDateString();
+                                }
+                            } catch (err) {
+                                console.warn('Error formatting date:', err);
+                            }
+
+                            // Format status with proper capitalization (with safety check)
+                            const status = transaction.status ?
+                                (transaction.status.charAt(0).toUpperCase() +
+                                    transaction.status.slice(1).toLowerCase()) : 'Unknown';
+
+                            // Safely access recipient name
+                            const recipientName = transaction.recipient?.name || 'Unknown';
+
+                            // Build the transaction line
+                            transactionList += `${index + 1}. ${dateStr}: ${transaction.amount} ${transaction.currency} to ${recipientName}\n   Status: ${status}\n\n`;
+                        });
+
+                        // Add message with action buttons
+                        this.addBotMessage(
+                            transactionList,
+                            [
                                 {
-                                    text: 'View Details',
-                                    action: () => this.router.navigate(['/transaction-confirmation', latestTransaction.id])
-                                },
-                                {
-                                    text: 'View All Transactions',
-                                    action: () => this.viewAllTransactions()
+                                    text: 'View Details of Latest',
+                                    action: () => this.router.navigate(['/transaction-confirmation', transactions[0].id], {
+                                        queryParams: { _t: new Date().getTime() }
+                                    })
                                 }
                             ]
-                        });
+                        );
                     } else {
-                        this.messages.push({
-                            id: Math.random().toString(36).substring(7),
-                            text: "You don't have any transactions yet.",
-                            sender: MessageSender.BOT,
-                            timestamp: new Date()
-                        });
+                        // No transactions found
+                        this.addBotMessage("You don't have any transactions yet. When you send money or make deposits, they will appear here.");
                     }
+
+                    // Force scroll to bottom for the response
+                    this.scrollToBottomForced();
                 },
                 error: (error) => {
-                    console.error('Error retrieving transaction history:', error);
-                    this.messages.push({
-                        id: Math.random().toString(36).substring(7),
-                        text: "I'm having trouble retrieving your transaction history. Please try again later.",
-                        sender: MessageSender.BOT,
-                        timestamp: new Date()
-                    });
+                    console.error('Error in subscription handler:', error);
+
+                    // Remove the processing message
+                    this.messages = this.messages.filter(msg => msg.id !== processingMessageId);
+
+                    // Provide a more detailed error message if possible
+                    this.addBotMessage("I'm having trouble retrieving your transaction history. This might be due to a temporary system issue. Please try again later.");
+
+                    // Force scroll to bottom for the error message
+                    this.scrollToBottomForced();
                 }
             });
-            return;
-        }
+    }
 
-        // If no local handling, send to service for processing
+    // Also add a dedicated method to handle the 'view transaction history' intent
+    private isViewHistoryIntent(message: string): boolean {
+        const lowercased = message.trim().toLowerCase();
+        return lowercased.includes('transaction history') ||
+            lowercased.includes('view history') ||
+            lowercased.includes('view transactions') ||
+            lowercased.includes('my transactions') ||
+            lowercased === 'history' ||
+            lowercased === 'check transaction history' ||
+            lowercased === 'check history';
+    }
+
+
+    // Send message to chat service
+    private sendMessageToService(message: string): void {
         this.chatService.sendMessage(message).subscribe({
             next: (command: BotCommand) => {
                 // Process the bot's command/intent if needed
@@ -525,137 +736,110 @@ export class ChatComponent implements OnInit, OnDestroy, AfterViewChecked {
         });
     }
 
-    // Update the voice-related methods in ChatComponent
+    // ---------- Voice Recognition Methods ----------
 
-    startVoiceRecognition(): void {
-        if (!this.voiceRecognitionSupported) {
-            // Show a message to user
-            this.messages.push({
-                id: Math.random().toString(36).substring(7),
-                text: 'Sorry, voice recognition is not supported in your browser. Please try using Chrome or Edge.',
-                sender: MessageSender.BOT,
-                timestamp: new Date()
-            });
+    // Optimized voice button handler
+    async voiceButtonClicked(): Promise<void> {
+        console.log('Voice button clicked, current state:', this.isListening ? 'listening' : 'not listening');
+
+        if (this.isListening) {
+            // If already listening, just stop
+            this.stopVoiceRecognition();
             return;
         }
 
-        // Add a listening message
-        const listeningMessageId = Math.random().toString(36).substring(7);
-        this.messages.push({
-            id: listeningMessageId,
-            text: '🎤 Listening... (say your command)',
-            sender: MessageSender.USER,
-            timestamp: new Date()
-        });
+        // Skip permission check if we've already used the microphone
+        if (!this.hasUsedMicrophoneBefore) {
+            try {
+                // Request microphone permission silently
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                stream.getTracks().forEach(track => track.stop());
+                this.hasUsedMicrophoneBefore = true;
+            } catch (err) {
+                // Show error if permission denied
+                console.error('Microphone permission error:', err);
+                this.addBotMessage('❌ Please allow microphone access to use voice commands.');
+                return;
+            }
+        }
 
-        // Scroll to bottom to show the listening message
-        this.scrollToBottom();
+        // Start voice recognition
+        this.startVoiceRecognition();
+    }
+
+    // Optimized start voice recognition
+    startVoiceRecognition(): void {
+        if (!this.voiceRecognitionSupported) {
+            // Show a message to user
+            this.addBotMessage('Sorry, voice recognition is not supported in your browser. Please try using Chrome or Edge.');
+            return;
+        }
+
+        // Save current input value to restore if needed
+        const previousInputValue = this.newMessage;
+
+        // Update input field to show "Listening..."
+        this.newMessage = 'Listening...';
+        this.cdRef.detectChanges();
 
         // Clear the last transcript
         this.lastTranscript = '';
 
         // Start the voice recognition
         this.voiceService.start();
-
-        // Listen for transcript
-        this.voiceService.transcript$
-            .pipe(takeUntil(this.destroy$))
-            .subscribe(transcript => {
-                if (transcript && transcript !== this.lastTranscript) {
-                    console.log('Received transcript:', transcript);
-                    this.lastTranscript = transcript;
-
-                    // Update the input field with the transcript
-                    this.newMessage = transcript;
-
-                    // Update the listening message with the transcript
-                    const updatedMessages: ChatMessage[] = [];
-                    for (const msg of this.messages) {
-                        if (msg.id === listeningMessageId) {
-                            updatedMessages.push({
-                                ...msg,
-                                text: `🎤 "${transcript}"`
-                            });
-                        } else {
-                            updatedMessages.push(msg);
-                        }
-                    }
-                    this.messages = updatedMessages;
-
-                    // Scroll to show the updated message
-                    this.scrollToBottom();
-                }
-            });
     }
+
+    // Update listening message with transcript
+    // Update the listening message to show feedback in the UI
+    private updateListeningMessage(transcript: string): void {
+        // Just update the input field with the transcript
+        this.newMessage = transcript;
+        this.cdRef.detectChanges();
+    }
+
+    // Check if we should auto-stop for specific commands
+    private shouldStopListeningForCommand(transcript: string): boolean {
+        const lowercased = transcript.toLowerCase();
+        return lowercased.includes('send') ||
+            lowercased.includes('check balance') ||
+            lowercased.includes('exchange rate') ||
+            lowercased.includes('deposit');
+    }
+
+    // Optimized stop voice recognition
     stopVoiceRecognition(): void {
         console.log('Stopping voice recognition, transcript:', this.lastTranscript);
+
+        // Store the current transcript before stopping
+        const transcript = this.lastTranscript;
 
         // Stop the recognition service
         this.voiceService.stop();
 
-        // Remove the listening message if it exists
-        const updatedMessages: ChatMessage[] = [];
-        for (const msg of this.messages) {
-            if (!msg.text.includes('🎤 Listening...')) {
-                updatedMessages.push(msg);
-            }
-        }
-        this.messages = updatedMessages;
+        // Clear the listening state
+        this.isListening = false;
 
-        // Make sure the input field is populated with the transcript
-        if (this.lastTranscript) {
-            this.newMessage = this.lastTranscript;
-
-            // Focus on the input field so the user can see it
-            setTimeout(() => {
-                const inputElement = document.querySelector('.chat-input input') as HTMLInputElement;
-                if (inputElement) {
-                    inputElement.focus();
-                }
-            }, 100);
-        }
-    }
-
-    // New method to process a voice transcript
-    private processVoiceTranscript(transcript: string): void {
-        console.log('Processing voice transcript:', transcript);
-
-        // First make sure the UI is updated to show the transcript
-        const updatedMessages: ChatMessage[] = [];
-        for (const msg of this.messages) {
-            if (msg.text.startsWith('🎤 "') && msg.text.endsWith('"')) {
-                updatedMessages.push({
-                    ...msg,
-                    text: `🎤 "${transcript}"`,  // Ensure it shows the final transcript
-                    isProcessing: false
-                });
-            } else {
-                updatedMessages.push(msg);
-            }
-        }
-        this.messages = updatedMessages;
-
-        // Wait a moment to ensure the UI is updated
-        setTimeout(() => {
-            // Use the transcript as the new message
+        // If we have a transcript, populate the input field with it
+        if (transcript) {
             this.newMessage = transcript;
 
-            // Send it through the normal message flow
-            this.sendMessage();
-        }, 1000);
+            // Focus on the input field
+            setTimeout(() => {
+                if (this.messageInput?.nativeElement) {
+                    this.messageInput.nativeElement.focus();
+                }
+            }, 50);
+        }
     }
-    // Update the processVoiceCommand method in chat.component.ts
 
+    // Simplified voice command processing
     private processVoiceCommand(): void {
         this.isProcessingVoiceCommand = true;
 
-        // If we have a transcript, simply process it directly as a text message
+        // If we have a transcript, simply update the input field
         if (this.lastTranscript) {
-            // Set the message text
+            // Set the message text but don't send
             this.newMessage = this.lastTranscript;
-
-            // Send the message through the normal text channel
-            this.sendMessage();
 
             // Reset
             this.lastTranscript = '';
@@ -666,27 +850,19 @@ export class ChatComponent implements OnInit, OnDestroy, AfterViewChecked {
         // If we don't have a transcript but have audio, send it for processing
         const audioBlob = this.voiceService.getAudioBlob();
         if (audioBlob) {
-            // Show a loading message
-            this.messages.push({
-                id: Math.random().toString(36).substring(7),
-                text: '🎤 Processing voice...',
-                sender: MessageSender.USER,
-                timestamp: new Date()
-            });
-
             // Process the audio
             this.chatService.processVoiceInput(audioBlob).subscribe({
                 next: (command: BotCommand) => {
                     console.log('Voice command processed:', command);
                     this.isProcessingVoiceCommand = false;
 
-                    // If we have a transcript, use it
+                    // If we have a transcript, just populate the input field
                     if (command.text) {
-                        // Set the message text
+                        // Set the message text but DON'T send
                         this.newMessage = command.text;
 
-                        // Send the message through the normal text channel
-                        this.sendMessage();
+                        // Update UI
+                        this.cdRef.detectChanges();
                     }
                 },
                 error: (error: any) => {
@@ -694,12 +870,7 @@ export class ChatComponent implements OnInit, OnDestroy, AfterViewChecked {
                     this.isProcessingVoiceCommand = false;
 
                     // Add error message
-                    this.messages.push({
-                        id: Math.random().toString(36).substring(7),
-                        text: 'Sorry, I had trouble understanding your voice command. Please try again or type your request.',
-                        sender: MessageSender.BOT,
-                        timestamp: new Date()
-                    });
+                    this.addBotMessage('Sorry, I had trouble understanding your voice command. Please try again or type your request.');
                 }
             });
         } else {
@@ -707,101 +878,7 @@ export class ChatComponent implements OnInit, OnDestroy, AfterViewChecked {
         }
     }
 
-    // Add this method to the ChatComponent
-    // Add a property to track if we've checked mic permission
-    private hasCheckedMicPermission = false;
-
-    // Update to allow silent permission check
-    private async checkMicrophonePermission(silent: boolean = false): Promise<boolean> {
-        try {
-            // Only display messages if not silent
-            if (!silent) {
-                this.messages.push({
-                    id: Math.random().toString(36).substring(7),
-                    text: 'Checking microphone access...',
-                    sender: MessageSender.BOT,
-                    timestamp: new Date()
-                });
-            }
-
-            // Try to get microphone permission
-            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-
-            // Release the stream immediately
-            stream.getTracks().forEach(track => track.stop());
-
-            // Display success message if not silent
-            if (!silent) {
-                this.messages.push({
-                    id: Math.random().toString(36).substring(7),
-                    text: '✅ Microphone access granted!',
-                    sender: MessageSender.BOT,
-                    timestamp: new Date()
-                });
-            }
-
-            return true;
-        } catch (err) {
-            console.error('Microphone permission error:', err);
-
-            // Display error message if not silent
-            if (!silent) {
-                this.messages.push({
-                    id: Math.random().toString(36).substring(7),
-                    text: '❌ Could not access microphone. Please check your browser settings and ensure microphone access is allowed.',
-                    sender: MessageSender.BOT,
-                    timestamp: new Date()
-                });
-            }
-
-            return false;
-        }
-    }
-
-
-
-    async voiceButtonClicked(): Promise<void> {
-        console.log('Voice button clicked, current state:', this.isListening ? 'listening' : 'not listening');
-
-        if (this.isListening) {
-            // If already listening, just stop
-            this.stopVoiceRecognition();
-        } else {
-            // Skip permission check if we've already used the microphone
-            if (!this.hasUsedMicrophoneBefore) {
-                try {
-                    // Request microphone permission silently
-                    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                    stream.getTracks().forEach(track => track.stop());
-                    this.hasUsedMicrophoneBefore = true;
-                } catch (err) {
-                    // Show error if permission denied
-                    console.error('Microphone permission error:', err);
-                    this.messages.push({
-                        id: Math.random().toString(36).substring(7),
-                        text: '❌ Please allow microphone access to use voice commands.',
-                        sender: MessageSender.BOT,
-                        timestamp: new Date()
-                    });
-                    return;
-                }
-            }
-
-            // Start voice recognition
-            this.startVoiceRecognition();
-        }
-    }
-
-    // Add a property to track if we've used the microphone before
-    private hasUsedMicrophoneBefore = false;
-
-    clearChat(): void {
-        this.chatService.clearChat();
-    }
-
-    login(): void {
-        this.router.navigate(['/login']);
-    }
+    // ----- Intent Handler Methods -----
 
     private handleCheckRates(entities: any): void {
         const fromCurrency = entities.fromCurrency || 'USD';
@@ -811,14 +888,7 @@ export class ChatComponent implements OnInit, OnDestroy, AfterViewChecked {
             .subscribe({
                 next: (result) => {
                     const botMessage = `The current exchange rate from ${fromCurrency} to ${toCurrency} is ${result.rate}`;
-
-                    // Add bot message directly to chat
-                    this.messages.push({
-                        id: Math.random().toString(36).substring(7),
-                        text: botMessage,
-                        sender: MessageSender.BOT,
-                        timestamp: new Date()
-                    });
+                    this.addBotMessage(botMessage);
                 },
                 error: (error: any) => {
                     console.error('Error fetching exchange rate:', error);
@@ -829,49 +899,31 @@ export class ChatComponent implements OnInit, OnDestroy, AfterViewChecked {
     private handleCheckBalance(): void {
         if (!this.isAuthenticated) {
             // Add message suggesting login
-            this.messages.push({
-                id: Math.random().toString(36).substring(7),
-                text: 'You need to log in to check your balance. Would you like to log in now?',
-                sender: MessageSender.BOT,
-                timestamp: new Date(),
-                actions: [
+            this.addBotMessage(
+                'You need to log in to check your balance. Would you like to log in now?',
+                [
                     {
                         text: 'Login',
                         action: () => this.router.navigate(['/login'])
                     }
                 ]
-            });
+            );
             return;
         }
 
         this.remittanceService.getUserBalance().subscribe({
             next: (balance) => {
                 const botMessage = `Your current balance is ${balance.balance} ${balance.currency}.`;
-
-                // Add bot message directly to chat
-                this.messages.push({
-                    id: Math.random().toString(36).substring(7),
-                    text: botMessage,
-                    sender: MessageSender.BOT,
-                    timestamp: new Date()
-                });
+                this.addBotMessage(botMessage);
             },
             error: (error) => {
                 console.error('Error fetching user balance:', error);
-
-                // Add error message
-                this.messages.push({
-                    id: Math.random().toString(36).substring(7),
-                    text: 'Sorry, I had trouble retrieving your balance. Please try again later.',
-                    sender: MessageSender.BOT,
-                    timestamp: new Date()
-                });
+                this.addBotMessage('Sorry, I had trouble retrieving your balance. Please try again later.');
             }
         });
     }
 
     private handleSendMoney(entities: any): void {
-        // This would process the money transfer intent and redirect to form if needed
         console.log('Send money intent detected with entities:', entities);
 
         if (this.isAuthenticated) {
@@ -912,22 +964,18 @@ export class ChatComponent implements OnInit, OnDestroy, AfterViewChecked {
             });
         } else {
             // Add bot message suggesting login
-            this.messages.push({
-                id: Math.random().toString(36).substring(7),
-                text: 'You need to log in to send money. Would you like to log in now?',
-                sender: MessageSender.BOT,
-                timestamp: new Date(),
-                actions: [
+            this.addBotMessage(
+                'You need to log in to send money. Would you like to log in now?',
+                [
                     {
                         text: 'Login',
                         action: () => this.router.navigate(['/login'])
                     }
                 ]
-            });
+            );
         }
     }
 
-    // Add method to handle deposit intents
     private handleDeposit(entities: any): void {
         const amount = entities.amount || 0;
         const currency = entities.currency || 'USD';
@@ -935,29 +983,22 @@ export class ChatComponent implements OnInit, OnDestroy, AfterViewChecked {
 
         if (!this.isAuthenticated) {
             // Add message suggesting login
-            this.messages.push({
-                id: Math.random().toString(36).substring(7),
-                text: 'You need to log in to make a deposit. Would you like to log in now?',
-                sender: MessageSender.BOT,
-                timestamp: new Date(),
-                actions: [
+            this.addBotMessage(
+                'You need to log in to make a deposit. Would you like to log in now?',
+                [
                     {
                         text: 'Login',
                         action: () => this.router.navigate(['/login'])
                     }
                 ]
-            });
+            );
             return;
         }
 
         // Show confirmation message with action buttons
-        const messageId = Math.random().toString(36).substring(7);
-        this.messages.push({
-            id: messageId,
-            text: `Would you like to deposit ${amount} ${currency} to your account?`,
-            sender: MessageSender.BOT,
-            timestamp: new Date(),
-            actions: [
+        this.addBotMessage(
+            `Would you like to deposit ${amount} ${currency} to your account?`,
+            [
                 {
                     text: 'Yes, proceed to deposit',
                     action: () => this.router.navigate(['/deposit'], {
@@ -973,19 +1014,16 @@ export class ChatComponent implements OnInit, OnDestroy, AfterViewChecked {
                     action: () => this.handleCancelTransaction()
                 }
             ]
-        });
+        );
     }
 
-    // Add methods to handle recipient confirmation and details completion
+    // ----- Helper Methods -----
+
     private showConfirmAddRecipient(amount: number, recipientName: string, currency: string): void {
         // Add a confirmation message with action buttons
-        const messageId = Math.random().toString(36).substring(7);
-        this.messages.push({
-            id: messageId,
-            text: `Would you like to add ${recipientName} as a new recipient?`,
-            sender: MessageSender.BOT,
-            timestamp: new Date(),
-            actions: [
+        this.addBotMessage(
+            `Would you like to add ${recipientName} as a new recipient?`,
+            [
                 {
                     text: 'Yes, add recipient',
                     action: () => this.handleAddNewRecipient(amount, recipientName, currency)
@@ -995,18 +1033,14 @@ export class ChatComponent implements OnInit, OnDestroy, AfterViewChecked {
                     action: () => this.handleCancelTransaction()
                 }
             ]
-        });
+        );
     }
 
     private showCompleteRecipientDetails(amount: number, recipientName: string, recipientId: string, currency: string): void {
         // Add a confirmation message with action buttons
-        const messageId = Math.random().toString(36).substring(7);
-        this.messages.push({
-            id: messageId,
-            text: `Would you like to complete ${recipientName}'s details before sending money?`,
-            sender: MessageSender.BOT,
-            timestamp: new Date(),
-            actions: [
+        this.addBotMessage(
+            `Would you like to complete ${recipientName}'s details before sending money?`,
+            [
                 {
                     text: 'Yes, complete details',
                     action: () => this.handleCompleteRecipientDetails(amount, recipientName, recipientId, currency)
@@ -1016,7 +1050,7 @@ export class ChatComponent implements OnInit, OnDestroy, AfterViewChecked {
                     action: () => this.handleCancelTransaction()
                 }
             ]
-        });
+        );
     }
 
     private handleAddNewRecipient(amount: number, recipientName: string, currency: string): void {
@@ -1046,18 +1080,13 @@ export class ChatComponent implements OnInit, OnDestroy, AfterViewChecked {
 
     private handleCancelTransaction(): void {
         // Add a message indicating the transaction was cancelled
-        this.messages.push({
-            id: Math.random().toString(36).substring(7),
-            text: 'Transaction cancelled. How else can I help you today?',
-            sender: MessageSender.BOT,
-            timestamp: new Date()
-        });
+        this.addBotMessage('Transaction cancelled. How else can I help you today?');
 
         // Clear pending transaction
         this.chatService.clearPendingTransaction();
     }
-    // Also add these helper methods to the ChatComponent class:
 
+    // Helper methods for viewing/managing recipients
     viewRecipients(): void {
         // In a real implementation, this would navigate to a recipients page
         // For now, use the remittance service to fetch and display recipients
@@ -1069,29 +1098,14 @@ export class ChatComponent implements OnInit, OnDestroy, AfterViewChecked {
                         recipientsList += `${index + 1}. ${recipient.name} (${recipient.country})\n`;
                     });
 
-                    this.messages.push({
-                        id: Math.random().toString(36).substring(7),
-                        text: recipientsList,
-                        sender: MessageSender.BOT,
-                        timestamp: new Date()
-                    });
+                    this.addBotMessage(recipientsList);
                 } else {
-                    this.messages.push({
-                        id: Math.random().toString(36).substring(7),
-                        text: "You don't have any saved recipients yet.",
-                        sender: MessageSender.BOT,
-                        timestamp: new Date()
-                    });
+                    this.addBotMessage("You don't have any saved recipients yet.");
                 }
             },
             error: (error) => {
                 console.error('Error retrieving recipients:', error);
-                this.messages.push({
-                    id: Math.random().toString(36).substring(7),
-                    text: "I'm having trouble retrieving your recipients. Please try again later.",
-                    sender: MessageSender.BOT,
-                    timestamp: new Date()
-                });
+                this.addBotMessage("I'm having trouble retrieving your recipients. Please try again later.");
             }
         });
     }
@@ -1116,30 +1130,83 @@ export class ChatComponent implements OnInit, OnDestroy, AfterViewChecked {
                         transactionList += `${index + 1}. ${transaction.amount} ${transaction.currency} to ${transaction.recipient?.name} - Status: ${transaction.status}\n`;
                     });
 
-                    this.messages.push({
-                        id: Math.random().toString(36).substring(7),
-                        text: transactionList,
-                        sender: MessageSender.BOT,
-                        timestamp: new Date()
-                    });
+                    this.addBotMessage(transactionList);
                 } else {
-                    this.messages.push({
-                        id: Math.random().toString(36).substring(7),
-                        text: "You don't have any transactions yet.",
-                        sender: MessageSender.BOT,
-                        timestamp: new Date()
-                    });
+                    this.addBotMessage("You don't have any transactions yet.");
                 }
             },
             error: (error) => {
                 console.error('Error retrieving transaction history:', error);
-                this.messages.push({
-                    id: Math.random().toString(36).substring(7),
-                    text: "I'm having trouble retrieving your transaction history. Please try again later.",
-                    sender: MessageSender.BOT,
-                    timestamp: new Date()
-                });
+                this.addBotMessage("I'm having trouble retrieving your transaction history. Please try again later.");
             }
         });
+    }
+
+    // Utility method to check for microphone permission
+    private async checkMicrophonePermission(silent: boolean = false): Promise<boolean> {
+        try {
+            // Only display messages if not silent
+            if (!silent) {
+                this.addBotMessage('Checking microphone access...');
+            }
+
+            // Try to get microphone permission
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+            // Release the stream immediately
+            stream.getTracks().forEach(track => track.stop());
+
+            // Display success message if not silent
+            if (!silent) {
+                this.addBotMessage('✅ Microphone access granted!');
+            }
+
+            return true;
+        } catch (err) {
+            console.error('Microphone permission error:', err);
+
+            // Display error message if not silent
+            if (!silent) {
+                this.addBotMessage('❌ Could not access microphone. Please check your browser settings and ensure microphone access is allowed.');
+            }
+
+            return false;
+        }
+    }
+
+    // TrackBy function for message list to improve performance
+    trackByMessageId(index: number, message: ChatMessage): string {
+        return message.id;
+    }
+
+    clearChat(): void {
+        this.chatService.clearChat();
+    }
+
+    login(): void {
+        this.router.navigate(['/login']);
+    }
+    private checkAuth(): void {
+        console.log('Chat Component - Current auth state:', this.isAuthenticated);
+
+        // If authService has the checkAuthStatus debugging method
+        if (this.authService['checkAuthStatus']) {
+            const status = this.authService['checkAuthStatus']();
+            console.log('Detailed auth status:', status);
+
+            // If there's a mismatch, try to fix it
+            if (status.hasToken !== this.isAuthenticated) {
+                console.warn('Auth state mismatch detected!');
+
+                if (this.authService['refreshAuthStatus']) {
+                    console.log('Attempting to refresh auth status...');
+                    this.authService['refreshAuthStatus']();
+
+                    // Update local isAuthenticated property
+                    this.isAuthenticated = !!this.authService.currentUser?.isAuthenticated;
+                    console.log('Updated isAuthenticated:', this.isAuthenticated);
+                }
+            }
+        }
     }
 }

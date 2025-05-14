@@ -549,15 +549,18 @@ export class RemittanceFormComponent implements OnInit {
                     // Then navigate after a short delay
                     setTimeout(() => {
                         this.successMessage = '';
-                        this.router.navigate(['/transaction-confirmation', transactionId]);
+                        this.router.navigate(['/transaction-confirmation', transactionId], {
+                            // Add unique timestamp to avoid caching issues
+                            queryParams: { _t: new Date().getTime() }
+                        });
                     }, 2000);
                 } else {
                     // Normal flow - navigate immediately
-                    this.router.navigate(['/transaction-confirmation', transactionId]);
+                    this.router.navigate(['/transaction-confirmation', transactionId], {
+                        // Add unique timestamp to avoid caching issues
+                        queryParams: { _t: new Date().getTime() }
+                    });
                 }
-            } else {
-                console.error('Transaction completed but no ID was returned:', result);
-                this.errorMessage = 'Transaction completed but confirmation details could not be displayed';
             }
         } catch (error) {
             console.error('Error processing transaction:', error);
@@ -569,6 +572,9 @@ export class RemittanceFormComponent implements OnInit {
     }
 
     cancel(): void {
-        this.router.navigate(['/']);
+        this.router.navigate(['/chat'], {
+            // Add timestamp to avoid query param conflicts
+            queryParams: { _t: new Date().getTime() }
+        });
     }
 }

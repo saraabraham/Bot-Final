@@ -17,7 +17,7 @@ export interface RemittanceTransaction {
     exchangeRate?: number;
     fees?: number;
     totalAmount?: number;
-    status: 'draft' | 'pending' | 'processing' | 'completed' | 'failed';
+    status: string;  // This is 'draft', 'pending', 'processing', 'completed', or 'failed'
     paymentMethod: string;
     createdAt: Date;
     completedAt?: Date;

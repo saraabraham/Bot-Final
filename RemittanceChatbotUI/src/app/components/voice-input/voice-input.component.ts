@@ -1,4 +1,4 @@
-import { Component, OnInit, OnDestroy, Output, EventEmitter } from '@angular/core';
+import { Component, OnInit, OnDestroy, Output, EventEmitter, ChangeDetectionStrategy, ChangeDetectorRef } from '@angular/core';
 import { Subject, takeUntil } from 'rxjs';
 import { VoiceRecognitionService } from '../../services/voice-recognition.service';
 import { ChatService } from '../../services/chat.service';
@@ -6,7 +6,8 @@ import { ChatService } from '../../services/chat.service';
 @Component({
     selector: 'app-voice-input',
     templateUrl: './voice-input.component.html',
-    styleUrls: ['./voice-input.component.scss']
+    styleUrls: ['./voice-input.component.scss'],
+    changeDetection: ChangeDetectionStrategy.OnPush // Add OnPush for better performance
 })
 export class VoiceInputComponent implements OnInit, OnDestroy {
     @Output() resultProcessed = new EventEmitter<void>();
@@ -21,42 +22,66 @@ export class VoiceInputComponent implements OnInit, OnDestroy {
 
     constructor(
         private voiceService: VoiceRecognitionService,
-        private chatService: ChatService
+        private chatService: ChatService,
+        private cdRef: ChangeDetectorRef
     ) { }
 
     ngOnInit(): void {
-        // Check if browser supports speech recognition
+        // Check browser support once on initialization
+        this.checkBrowserSupport();
+
+        // Set up subscriptions
+        this.setupSubscriptions();
+    }
+
+    ngOnDestroy(): void {
+        this.destroy$.next();
+        this.destroy$.complete();
+    }
+
+    private checkBrowserSupport(): void {
         const SpeechRecognition = (window as any).SpeechRecognition ||
             (window as any).webkitSpeechRecognition;
 
-        if (!SpeechRecognition) {
-            this.microphoneSupported = false;
-            this.errorMessage = 'Your browser does not support voice recognition. Try using Chrome or Edge.';
-        }
+        this.microphoneSupported = !!SpeechRecognition;
+        this.cdRef.markForCheck();
+    }
 
+    private setupSubscriptions(): void {
         // Subscribe to voice recognition status
         this.voiceService.isListening$
             .pipe(takeUntil(this.destroy$))
             .subscribe(isListening => {
                 this.isListening = isListening;
 
-                // When we stop listening but have a transcript, process it
+                // If stopped listening but have a transcript, process it
                 if (!isListening && this.transcript && !this.processingAudio) {
                     this.processVoiceInput();
                 }
+
+                this.cdRef.markForCheck();
             });
 
         // Subscribe to voice transcripts
         this.voiceService.transcript$
             .pipe(takeUntil(this.destroy$))
             .subscribe(transcript => {
-                this.transcript = transcript;
+                if (transcript) {
+                    this.transcript = transcript;
+                    // Force UI update
+                    this.cdRef.markForCheck();
+                }
             });
-    }
 
-    ngOnDestroy(): void {
-        this.destroy$.next();
-        this.destroy$.complete();
+        // Subscribe to voice recognition errors
+        this.voiceService.error$
+            .pipe(takeUntil(this.destroy$))
+            .subscribe(error => {
+                if (error) {
+                    this.errorMessage = error;
+                    this.cdRef.markForCheck();
+                }
+            });
     }
 
     toggleVoiceRecognition(): void {
@@ -78,20 +103,24 @@ export class VoiceInputComponent implements OnInit, OnDestroy {
             return;
         }
 
-        const audioBlob = this.voiceService.getAudioBlob();
-        if (audioBlob) {
-            this.processingAudio = true;
+        this.processingAudio = true;
+        this.cdRef.markForCheck();
 
+        const audioBlob = this.voiceService.getAudioBlob();
+
+        if (audioBlob) {
             this.chatService.processVoiceInput(audioBlob).subscribe({
                 next: (command) => {
                     console.log('Voice command processed:', command);
                     this.processingAudio = false;
                     this.resultProcessed.emit();
+                    this.cdRef.markForCheck();
                 },
                 error: (error) => {
                     console.error('Error processing voice command:', error);
                     this.errorMessage = 'Failed to process voice input. Please try again.';
                     this.processingAudio = false;
+                    this.cdRef.markForCheck();
                 }
             });
         } else {
@@ -103,6 +132,7 @@ export class VoiceInputComponent implements OnInit, OnDestroy {
                 error: (error) => {
                     console.error('Error sending voice transcript:', error);
                     this.errorMessage = 'Failed to send voice message. Please try again.';
+                    this.cdRef.markForCheck();
                 }
             });
         }
