@@ -1,6 +1,6 @@
 <div class="chat-container">
     <div class="chat-header">
-        <h2>Infinora RemitAssist</h2>
+        <h2>Ifinora RemitAssist</h2>
         <div class="header-actions">
             <button *ngIf="!isAuthenticated" (click)="login()" class="login-button">Login</button>
             <button (click)="clearChat()" class="clear-button">Clear Chat</button>
@@ -8,8 +8,8 @@
     </div>
 
     <div #chatMessages class="chat-messages">
-        <div *ngFor="let message of messages$ | async" [ngClass]="{'user-message': message.sender === 'user', 
-                         'bot-message': message.sender === 'bot'}">
+        <div *ngFor="let message of messages"
+            [ngClass]="{'user-message': message.sender === 'user', 'bot-message': message.sender === 'bot'}">
             <div class="message-content">
                 <ng-container *ngIf="!message.isProcessing; else processingTemplate">
                     {{ message.text }}
@@ -39,6 +39,7 @@
         <div class="input-wrapper" [ngClass]="{'listening': isListening}">
             <input type="text" [(ngModel)]="newMessage" placeholder="Type your message..." (keyup.enter)="sendMessage()"
                 [disabled]="isListening">
+
 
             <!-- Add a mic indicator that shows in the input when listening -->
             <div class="listening-indicator" *ngIf="isListening">

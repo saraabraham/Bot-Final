@@ -324,19 +324,36 @@ export class ChatService {
 
     // Main method to process user messages
     public sendMessage(text: string): Observable<BotCommand> {
+        console.log('Processing user message:', text);
+
         // Add user message and bot loading message
         const { userMessageId, botMessageId } = this.addUserMessageAndBotLoading(text);
+
+        // First check for partial/incomplete commands
+        const trimmedText = text.trim().toLowerCase();
 
         // Check if we're in the middle of a conversation flow
         const currentState = this.getConversationState();
 
+        // Handle cancel commands first
+        if (trimmedText.includes('cancel') && currentState.flow) {
+            return this.processCancelCommand(botMessageId);
+        }
+
         // If we're collecting a field in an active flow, process it
-        if (currentState.flow && currentState.collectingField && !text.toLowerCase().includes('cancel')) {
+        if (currentState.flow && currentState.collectingField &&
+            !trimmedText.includes('cancel')) {
             return this.processOngoingConversation(text, botMessageId);
         }
 
-        // Process initial "send money" command
-        if (this.isSendMoneyCommand(text) && this.authService.isAuthenticated) {
+        // IMPORTANT: Special handling for generic/incomplete commands
+        // These should start a conversation flow rather than being treated as complete commands
+        if (this.isGenericCommand(trimmedText)) {
+            return this.processGenericCommand(trimmedText, botMessageId);
+        }
+
+        // Process specific "send money" commands with recipient/amount details
+        if (this.isSpecificSendMoneyCommand(text)) {
             return this.processSendMoneyCommand(text, botMessageId);
         }
 
@@ -350,27 +367,98 @@ export class ChatService {
             return this.processCheckBalanceCommand(botMessageId);
         }
 
-        // If it's a cancel command in any active flow
-        if (text.toLowerCase().includes('cancel') && currentState.flow) {
-            return this.processCancelCommand(botMessageId);
-        }
-
-        // Default handling with backend
+        // Default handling with backend for all other messages
         return this.sendToBackend(text, botMessageId);
     }
 
-    // Detect "send money" commands
-    private isSendMoneyCommand(text: string): boolean {
+    // New helper method to detect generic/incomplete commands
+    private isGenericCommand(text: string): boolean {
+        const commandPatterns = [
+            /^send$/i,
+            /^send money$/i,
+            /^transfer$/i,
+            /^transfer money$/i,
+            /^pay$/i,
+            /^remit$/i,
+            /^remit money$/i
+        ];
+
+        return commandPatterns.some(pattern => pattern.test(text));
+    }
+
+    // New method to handle generic commands
+    private processGenericCommand(text: string, botMessageId: string): Observable<BotCommand> {
+        console.log('Processing generic command:', text);
+
+        // Determine which type of generic command it is
+        if (text.includes('money') ||
+            text.includes('send') ||
+            text.includes('transfer') ||
+            text.includes('remit') ||
+            text.includes('pay')) {
+
+            // It's a money sending intent
+            const askRecipientText = "I'll help you send money. Who would you like to send money to?";
+            this.updateBotMessage(botMessageId, askRecipientText);
+
+            // Start the send money flow
+            this.setConversationState({
+                flow: 'send_money',
+                collectingField: 'recipient_name'
+            });
+
+            return of({
+                intent: 'send_money',
+                entities: {},
+                confidence: 0.9,
+                text: askRecipientText
+            });
+        }
+
+        // For other generic commands, send to backend
+        return this.sendToBackend(text, botMessageId);
+    }
+    // Enhanced method to detect only specific and complete send money commands
+    private isSpecificSendMoneyCommand(text: string): boolean {
         const lowercaseText = text.toLowerCase();
+
+        // Only match patterns that clearly include both action and recipient
+        // These patterns require either "to" or amount + name syntax
         return (
-            lowercaseText.includes('send money') ||
-            lowercaseText.includes('transfer money') ||
-            lowercaseText.includes('remit money') ||
             lowercaseText.match(/send .+ to .+/) !== null ||
             lowercaseText.match(/transfer .+ to .+/) !== null ||
-            lowercaseText.match(/pay .+ to .+/) !== null
+            lowercaseText.match(/pay .+ to .+/) !== null ||
+            // Pattern for commands with recipient first then amount (must have digits)
+            lowercaseText.match(/send [a-z\s]+ \$?[0-9]+/) !== null ||
+            lowercaseText.match(/pay [a-z\s]+ \$?[0-9]+/) !== null
         );
     }
+
+
+    // Detect "send money" commands
+    private isSendMoneyCommand(text: string): boolean {
+        const lowercaseText = text.toLowerCase().trim();
+
+        // First check for generic command patterns that shouldn't trigger immediate processing
+        if (lowercaseText === 'send money' ||
+            lowercaseText === 'transfer money' ||
+            lowercaseText === 'remit money' ||
+            lowercaseText === 'send' ||
+            lowercaseText === 'transfer') {
+            return false; // Let the backend handle these generic intents
+        }
+
+        // Only trigger our custom handling for more specific commands
+        return (
+            lowercaseText.match(/send .+ to .+/) !== null ||
+            lowercaseText.match(/transfer .+ to .+/) !== null ||
+            lowercaseText.match(/pay .+ to .+/) !== null ||
+            // Pattern for commands with recipient first then amount
+            lowercaseText.match(/send [a-z\s]+ \$?[0-9]+/) !== null ||
+            lowercaseText.match(/pay [a-z\s]+ \$?[0-9]+/) !== null
+        );
+    }
+
 
     // Detect "deposit" commands
     private isDepositCommand(text: string): boolean {
@@ -417,35 +505,98 @@ export class ChatService {
         });
     }
 
-    // Process "send money" command (improved version)
+    // Process "send money" command
     private processSendMoneyCommand(text: string, botMessageId: string): Observable<BotCommand> {
-        // Try to extract recipient and amount from the command
-        // Improved regex to capture more variations of the send money command
-        const sendMoneyMatch = text.match(/(?:send|transfer|remit|pay)(?:\s+(?:\$?\s*)?([\d,.]+))?(?:\s*(?:dollars|euros?|pounds?|usd|eur|gbp))?(?:\s+(?:to|for)\s+)?([a-z\s]+)/i);
+        console.log('Processing send money command:', text);
+
+        // Improved regex pattern to extract recipient and amount from various command formats
+        // This pattern can detect commands like:
+        // - send $10 to Alicia
+        // - send 10 dollars to Alicia
+        // - transfer $10 to Alicia
+        // - pay Alicia $10
+        // - send 10 EUR to Alicia
+        const genericCommandMatch = /^(?:send|transfer|remit)\s+money$/i.test(text.trim());
+
+        if (genericCommandMatch) {
+            console.log('Detected generic send money command');
+            const askRecipientText = "I'll help you send money. Who would you like to send money to?";
+            this.updateBotMessage(botMessageId, askRecipientText);
+
+            // Start the send money flow, asking for recipient
+            this.setConversationState({
+                flow: 'send_money',
+                collectingField: 'recipient_name'
+            });
+
+            return of({
+                intent: 'send_money',
+                entities: {},
+                confidence: 0.9,
+                text: askRecipientText
+            });
+        }
+        // Continue with the existing logic for detailed commands
+        // Improved regex pattern to extract recipient and amount from various command formats
+        const sendMoneyMatch = text.match(/(?:send|transfer|remit|pay)(?:\s+(?:\$?\s*)?([0-9,.]+))?(?:\s*(?:dollars|euros?|pounds?|usd|eur|gbp))?(?:\s+(?:to|for)\s+)([a-z\s]+)(?:\s+\$?([0-9,.]+))?/i);
+
+        // Also check for alternative format: "send Alicia $10" or "pay Alicia 10 euros"
+        const alternateSendMatch = text.match(/(?:send|transfer|remit|pay)\s+(?!money)([a-z\s]+)\s+\$?([0-9,.]+)(?:\s*(?:dollars|euros?|pounds?|usd|eur|gbp))?/i);
 
         let recipientName = '';
         let amount = 0;
+        let currency = 'USD'; // Default currency
 
-        if (sendMoneyMatch && sendMoneyMatch[2]) {
-            // Extract recipient name
-            recipientName = sendMoneyMatch[2].trim();
-
-            // Extract amount if available
-            if (sendMoneyMatch[1]) {
-                amount = parseFloat(sendMoneyMatch[1].replace(/,/g, ''));
-            }
-        } else {
-            // Try alternative pattern without "to" or "for"
-            const altMatch = text.match(/(?:send|transfer|remit|pay)(?:\s+(?:\$?\s*)?([\d,.]+))?(?:\s*(?:dollars|euros?|pounds?|usd|eur|gbp))?(?:\s+)([a-z\s]+)/i);
-
-            if (altMatch && altMatch[2]) {
-                recipientName = altMatch[2].trim();
-
-                if (altMatch[1]) {
-                    amount = parseFloat(altMatch[1].replace(/,/g, ''));
-                }
+        // Try to extract currency from the command
+        const currencyMatch = text.toLowerCase().match(/(?:dollars|usd|euros?|eur|pounds?|gbp|rupees?|inr)/);
+        if (currencyMatch) {
+            switch (currencyMatch[0]) {
+                case 'dollars':
+                case 'usd':
+                    currency = 'USD';
+                    break;
+                case 'euro':
+                case 'euros':
+                case 'eur':
+                    currency = 'EUR';
+                    break;
+                case 'pound':
+                case 'pounds':
+                case 'gbp':
+                    currency = 'GBP';
+                    break;
+                case 'rupee':
+                case 'rupees':
+                case 'inr':
+                    currency = 'INR';
+                    break;
+                // Add more currencies as needed
             }
         }
+
+        // Extract recipient and amount from first pattern
+        if (sendMoneyMatch) {
+            // Try to extract recipient name
+            recipientName = sendMoneyMatch[2] ? sendMoneyMatch[2].trim() : '';
+
+            // Try to extract amount - could be in position 1 or 3
+            const amountStr = sendMoneyMatch[1] || sendMoneyMatch[3];
+            if (amountStr) {
+                amount = parseFloat(amountStr.replace(/,/g, ''));
+            }
+        }
+        // Try alternate pattern if first one didn't work
+        else if (alternateSendMatch) {
+            recipientName = alternateSendMatch[1] ? alternateSendMatch[1].trim() : '';
+
+            // Extract amount
+            const amountStr = alternateSendMatch[2];
+            if (amountStr) {
+                amount = parseFloat(amountStr.replace(/,/g, ''));
+            }
+        }
+
+        console.log(`Extracted: Recipient=${recipientName}, Amount=${amount}, Currency=${currency}`);
 
         // If we couldn't extract a recipient, ask for one
         if (!recipientName) {
@@ -456,7 +607,7 @@ export class ChatService {
             this.setConversationState({
                 flow: 'send_money',
                 collectingField: 'recipient_name',
-                transactionDetails: amount > 0 ? { amount } : {}
+                transactionDetails: amount > 0 ? { amount, currency } : {}
             });
 
             return of({
@@ -467,17 +618,43 @@ export class ChatService {
             });
         }
 
-        // If we have a recipient, check if they exist
-        const existingRecipient = this.findRecipientByName(recipientName);
+        // *** Enhanced recipient matching ***
+        // First try exact match
+        let existingRecipient = this.findRecipientByName(recipientName);
+
+        // If no exact match, try fuzzy matching (same as findRecipientByName but case-insensitive)
+        if (!existingRecipient) {
+            // Make sure we have recipients loaded
+            if (this.cachedRecipients && this.cachedRecipients.length > 0) {
+                console.log('Attempting fuzzy match for recipient:', recipientName);
+
+                // Try case-insensitive matching
+                const normalizedName = recipientName.toLowerCase().trim();
+
+                // Log all cached recipients for debugging
+                console.log('Available recipients:', this.cachedRecipients.map(r => r.name));
+
+                // Try partial matching (recipient name contains the input or vice versa)
+                const matchedRecipient = this.cachedRecipients.find(r =>
+                    r.name.toLowerCase().includes(normalizedName) ||
+                    normalizedName.includes(r.name.toLowerCase())
+                );
+                existingRecipient = matchedRecipient || null; // Convert undefined to null
+
+                if (existingRecipient) {
+                    console.log('Found recipient via fuzzy matching:', existingRecipient.name);
+                }
+            }
+        }
 
         if (existingRecipient) {
             // We found the recipient in saved recipients
             let responseText: string;
 
             if (amount > 0) {
-                responseText = `I found ${existingRecipient.name} in your saved recipients. You want to send ${amount}. What currency would you like to use? (Default is USD)`;
+                responseText = `I found ${existingRecipient.name} in your saved recipients. You want to send ${amount} ${currency}. Is that correct?`;
 
-                // Set up conversation state to collect currency
+                // Set up conversation state with all collected details
                 this.setConversationState({
                     flow: 'send_money',
                     tempRecipient: {
@@ -491,8 +668,8 @@ export class ChatService {
                     },
                     recipientExists: true,
                     recipientComplete: this.isRecipientComplete(existingRecipient),
-                    transactionDetails: { amount },
-                    collectingField: 'currency'
+                    transactionDetails: { amount, currency },
+                    collectingField: 'confirmation'
                 });
             } else {
                 responseText = `I found ${existingRecipient.name} in your saved recipients. How much would you like to send to ${existingRecipient.name}?`;
@@ -522,7 +699,8 @@ export class ChatService {
                 entities: {
                     recipient: existingRecipient.name,
                     recipientExists: true,
-                    amount: amount > 0 ? amount : undefined
+                    amount: amount > 0 ? amount : undefined,
+                    currency: currency
                 },
                 confidence: 0.9,
                 text: responseText
@@ -532,14 +710,14 @@ export class ChatService {
             let responseText: string;
 
             if (amount > 0) {
-                responseText = `I'll add ${recipientName} as a new recipient. You want to send ${amount}. First, what is ${recipientName}'s account number?`;
+                responseText = `I'll add ${recipientName} as a new recipient. You want to send ${amount} ${currency}. First, what is ${recipientName}'s account number?`;
 
                 // Set up conversation state with amount and to collect account number
                 this.setConversationState({
                     flow: 'send_money',
                     tempRecipient: { name: recipientName },
                     recipientExists: false,
-                    transactionDetails: { amount },
+                    transactionDetails: { amount, currency },
                     collectingField: 'account_number'
                 });
             } else {
@@ -561,7 +739,8 @@ export class ChatService {
                 entities: {
                     recipient: recipientName,
                     recipientExists: false,
-                    amount: amount > 0 ? amount : undefined
+                    amount: amount > 0 ? amount : undefined,
+                    currency: currency
                 },
                 confidence: 0.9,
                 text: responseText
@@ -569,17 +748,49 @@ export class ChatService {
         }
     }
 
-    getChatHistory(): Observable<ChatMessage[]> {
-        const apiUrl = `${environment.apiUrl}/chat`;
-        return this.http.get<ChatMessage[]>(`${apiUrl}/history`)
-            .pipe(
-                catchError(error => {
-                    console.error('Error fetching chat history:', error);
-                    return of([]);
-                })
-            );
-    }
+    private findRecipientByName(name: string): Recipient | null {
+        if (!name || !this.cachedRecipients || !this.cachedRecipients.length) return null;
 
+        console.log(`Searching for recipient: "${name}" among ${this.cachedRecipients.length} recipients`);
+
+        // First try exact match
+        const exactMatch = this.cachedRecipients.find(r =>
+            r.name === name
+        );
+
+        if (exactMatch) {
+            console.log("Found exact match:", exactMatch.name);
+            return exactMatch;
+        }
+
+        // Then try case-insensitive match
+        const normalizedName = name.toLowerCase().trim();
+        const caseInsensitiveMatch = this.cachedRecipients.find(r =>
+            r.name.toLowerCase().trim() === normalizedName
+        );
+
+        if (caseInsensitiveMatch) {
+            console.log("Found case-insensitive match:", caseInsensitiveMatch.name);
+            return caseInsensitiveMatch;
+        }
+
+        // Try partial matching (recipient name contains the input or vice versa)
+        const partialMatch = this.cachedRecipients.find(r =>
+            r.name.toLowerCase().includes(normalizedName) ||
+            normalizedName.includes(r.name.toLowerCase())
+        );
+
+        if (partialMatch) {
+            console.log("Found partial match:", partialMatch.name);
+            return partialMatch;
+        }
+
+        // If still not found, log all recipients for debugging
+        console.log("No match found. Available recipients:",
+            this.cachedRecipients.map(r => r.name));
+
+        return null; // Explicitly return null instead of undefined
+    }
     // Process "deposit" command
     private processDepositCommand(text: string, botMessageId: string): Observable<BotCommand> {
         // Try to extract amount from the deposit command
@@ -1423,27 +1634,27 @@ export class ChatService {
     }
 
     // Helper method to find a recipient by name
-    // Method to find a recipient by name (improved version)
-    private findRecipientByName(name: string): Recipient | null {
-        if (!name || !this.cachedRecipients.length) return null;
 
-        // Normalize name for comparison
-        const normalizedName = name.toLowerCase().trim();
+    private async updateUserSavedRecipients(newRecipientId: string): Promise<void> {
+        if (!this.authService.isAuthenticated || !newRecipientId) return;
 
-        // First try exact match (case-insensitive)
-        const exactMatch = this.cachedRecipients.find(r =>
-            r.name.toLowerCase().trim() === normalizedName
-        );
+        try {
+            // First get current user info to check existing savedRecipients
+            const userId = this.authService.currentUser?.id;
 
-        if (exactMatch) return exactMatch;
+            // We can use the remittanceService to find the user
+            // Add this recipient ID to the user's saved recipients
+            // You'll need to implement this method in your backend service
+            // This is a placeholder for what you need to implement
+            await this.remittanceService.addRecipientToUserSaved(newRecipientId).toPromise();
 
-        // Then try "contains" match for partial names or nicknames
-        const partialMatch = this.cachedRecipients.find(r =>
-            r.name.toLowerCase().includes(normalizedName) ||
-            normalizedName.includes(r.name.toLowerCase())
-        );
+            // After successfully adding, reload recipient cache
+            this.loadRecipients();
 
-        return partialMatch || null;
+            console.log(`Added recipient ${newRecipientId} to user's saved recipients`);
+        } catch (error) {
+            console.error("Failed to update user's saved recipients:", error);
+        }
     }
 
     // Helper method to check if a recipient has complete details

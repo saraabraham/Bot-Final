@@ -43,6 +43,49 @@ namespace RemittanceAPI.Controllers
                 return StatusCode(500, new { message = "An error occurred while getting exchange rate" });
             }
         }
+        [Authorize]
+        [HttpPost("recipients/add-to-saved")]
+        public async Task<IActionResult> AddRecipientToSaved([FromBody] AddRecipientRequest request)
+        {
+            if (string.IsNullOrEmpty(request.RecipientId))
+            {
+                return BadRequest(new { message = "Recipient ID is required" });
+            }
+
+            try
+            {
+                string userId = User.FindFirst("sub")?.Value;
+                if (string.IsNullOrEmpty(userId))
+                {
+                    userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+                    _logger.LogInformation($"AddRecipientToSaved - User ID from NameIdentifier: {userId}");
+
+                    if (string.IsNullOrEmpty(userId))
+                    {
+                        return BadRequest(new { message = "User ID not found in token" });
+                    }
+                }
+
+                // Use the remittance service instead of directly accessing the db context
+                var result = await _remittanceService.AddRecipientToSavedAsync(userId, request.RecipientId);
+
+                if (result)
+                {
+                    return Ok(new { message = "Recipient added to saved list" });
+                }
+                else
+                {
+                    return Ok(new { message = "Recipient already in saved list" });
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, $"Error adding recipient {request.RecipientId} to saved list");
+                return StatusCode(500, new { message = $"An error occurred: {ex.Message}" });
+            }
+        }
+
+
 
         [HttpGet("fees")]
         public async Task<IActionResult> CalculateFees([FromQuery] decimal amount, [FromQuery] string currency, [FromQuery] string method)

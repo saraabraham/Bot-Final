@@ -5,8 +5,6 @@ import { catchError, tap } from 'rxjs/operators';
 import { RemittanceTransaction, Recipient } from '../models/remittance.model';
 import { environment } from '../../environments/environment';
 import { delay, map } from 'rxjs/operators';
-import { AuthService } from './auth.service'; // Import AuthService
-
 
 
 // Add this interface
@@ -68,7 +66,7 @@ export interface DepositResponse {
 export class RemittanceService {
     private apiUrl = `${environment.apiUrl}/remittance`;
 
-    constructor(private http: HttpClient, private authService: AuthService) { }
+    constructor(private http: HttpClient) { }
 
     private handleError(error: HttpErrorResponse) {
         console.error('API Error:', error);
@@ -110,9 +108,8 @@ export class RemittanceService {
             );
     }
 
-    // Update findOrCreateRecipient method
+    // Add method to find or create a recipient
     findOrCreateRecipient(name: string): Observable<Recipient> {
-        // Make sure to include auth service dependency and inject it
         return this.http.post<Recipient>(`${this.apiUrl}/recipients/find-or-create`, { name })
             .pipe(
                 tap(recipient => console.log('Recipient found or created:', recipient)),
@@ -142,28 +139,78 @@ export class RemittanceService {
                 tap(recipients => console.log('Recipients received:', recipients)),
                 catchError(this.handleError)
             );
+
+    }
+    addRecipientToUserSaved(recipientId: string): Observable<any> {
+        console.log(`Adding recipient ${recipientId} to user's saved recipients`);
+
+        // Create endpoint URL - you'll need to implement this endpoint in your backend
+        const url = `${this.apiUrl}/recipients/add-to-saved`;
+
+        // Make the API call to update the user's saved recipients
+        return this.http.post(url, { recipientId }).pipe(
+            tap(response => {
+                console.log('Recipient added to saved list:', response);
+            }),
+            catchError(error => {
+                console.error('Error adding recipient to saved list:', error);
+
+                // If the backend endpoint doesn't exist yet, we'll implement a fallback
+                // This is temporary until you implement the proper endpoint
+                return this.getSavedRecipients().pipe(
+                    tap(() => {
+                        console.log('Refreshed recipients list after adding new recipient');
+                    })
+                );
+            })
+        );
+    }
+    findRecipientByName(name: string): Observable<Recipient | null> {
+        console.log(`Finding recipient by name: "${name}"`);
+
+        // First try to find recipient in cache
+        return this.getSavedRecipients().pipe(
+            map(recipients => {
+                if (!recipients || recipients.length === 0 || !name) {
+                    return null;
+                }
+
+                // Normalize search name
+                const searchName = name.toLowerCase().trim();
+
+                // Try exact match first
+                let match = recipients.find(r =>
+                    r.name.toLowerCase().trim() === searchName
+                );
+
+                // If no match, try fuzzy matching
+                if (!match) {
+                    match = recipients.find(r =>
+                        r.name.toLowerCase().includes(searchName) ||
+                        searchName.includes(r.name.toLowerCase())
+                    );
+                }
+
+                return match || null;
+            })
+        );
     }
 
     saveRecipient(recipient: Recipient): Observable<Recipient> {
         console.log('Saving recipient:', recipient);
-
-        // Set sender ID if not already set
-        if (!recipient.senderId && this.authService?.currentUser?.id) {
-            recipient.senderId = this.authService.currentUser.id;
-        }
-
         return this.http.post<Recipient>(`${this.apiUrl}/recipients`, recipient)
             .pipe(
                 tap(saved => console.log('Recipient saved:', saved)),
                 catchError(this.handleError)
             );
     }
+
     sendMoney(transaction: RemittanceTransaction): Observable<RemittanceTransaction> {
         console.log('Sending transaction:', transaction);
         // Validate transaction data before sending to the server
         const validationErrors: string[] = [];
 
-        if (!transaction.recipient || !transaction.recipient.name) {
+        if (!transaction.recipient || !transaction.recipient.id) {
             validationErrors.push('Missing recipient information');
         }
 
@@ -185,16 +232,6 @@ export class RemittanceService {
             return throwError(() => new Error(validationErrors.join('. ')));
         }
 
-        // Set sender ID if not already set
-        if (!transaction.senderId && this.authService?.currentUser?.id) {
-            transaction.senderId = this.authService.currentUser.id;
-        }
-
-        // Ensure recipient has a sender ID (to connect it to the user)
-        if (transaction.recipient && !transaction.recipient.senderId && this.authService?.currentUser?.id) {
-            transaction.recipient.senderId = this.authService.currentUser.id;
-        }
-
         // Format dates correctly for backend
         const formattedTransaction = {
             ...transaction,
@@ -207,6 +244,7 @@ export class RemittanceService {
                 catchError(this.handleError)
             );
     }
+
 
     getTransactionHistory(): Observable<RemittanceTransaction[]> {
         console.log('Getting transaction history from real backend');
