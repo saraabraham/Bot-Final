@@ -8,8 +8,8 @@
     </div>
 
     <div #chatMessages class="chat-messages">
-        <div *ngFor="let message of messages"
-            [ngClass]="{'user-message': message.sender === 'user', 'bot-message': message.sender === 'bot'}">
+        <div *ngFor="let message of messages$ | async" [ngClass]="{'user-message': message.sender === 'user', 
+                         'bot-message': message.sender === 'bot'}">
             <div class="message-content">
                 <ng-container *ngIf="!message.isProcessing; else processingTemplate">
                     {{ message.text }}

@@ -151,6 +151,30 @@ namespace RemittanceAPI.Services
 
                 // Add as a new recipient
                 await _dbContext.Recipients.AddAsync(recipient);
+
+                // FIX: Add the new recipient ID to the sender's saved recipients list
+                if (!string.IsNullOrEmpty(recipient.SenderId))
+                {
+                    var user = await _dbContext.Users.FirstOrDefaultAsync(u => u.Id == recipient.SenderId);
+                    if (user != null)
+                    {
+                        _logger.LogInformation($"Adding recipient {recipient.Id} to user {user.Id} saved recipients list");
+
+                        // Initialize the list if it's null
+                        if (user.SavedRecipients == null)
+                        {
+                            user.SavedRecipients = new List<string>();
+                        }
+
+                        // Add the recipient ID if it's not already in the list
+                        if (!user.SavedRecipients.Contains(recipient.Id))
+                        {
+                            user.SavedRecipients.Add(recipient.Id);
+                            _dbContext.Users.Update(user);
+                        }
+                    }
+                }
+
                 await _dbContext.SaveChangesAsync();
                 return recipient;
             }
@@ -216,22 +240,42 @@ namespace RemittanceAPI.Services
                 throw new InvalidOperationException($"Insufficient balance. You have {user.Balance} {user.PreferredCurrency} but need {totalInUserCurrency} {user.PreferredCurrency}");
             }
 
-
             // Generate ID if not provided
             if (string.IsNullOrEmpty(transaction.Id))
             {
                 transaction.Id = Guid.NewGuid().ToString();
             }
 
-            // Handle recipient first
+            // Handle recipient first - UPDATED SECTION
             if (transaction.Recipient != null)
             {
                 try
                 {
+                    // Set the sender ID for the recipient to ensure it gets associated with this user
+                    if (string.IsNullOrEmpty(transaction.Recipient.SenderId))
+                    {
+                        transaction.Recipient.SenderId = transaction.SenderId;
+                    }
+
                     // Save the recipient and get a reference to the saved entity
                     var savedRecipient = await SaveRecipientAsync(transaction.Recipient);
+
                     // Replace the transaction's recipient reference with the saved one
                     transaction.Recipient = savedRecipient;
+
+                    // Check if this recipient is already in user's saved recipients
+                    if (user.SavedRecipients == null)
+                    {
+                        user.SavedRecipients = new List<string>();
+                    }
+
+                    if (!user.SavedRecipients.Contains(savedRecipient.Id))
+                    {
+                        // Add to user's saved recipients if not already there
+                        _logger.LogInformation($"Adding recipient {savedRecipient.Id} to user's saved recipients");
+                        user.SavedRecipients.Add(savedRecipient.Id);
+                        _dbContext.Users.Update(user);
+                    }
                 }
                 catch (Exception ex)
                 {
@@ -277,7 +321,9 @@ namespace RemittanceAPI.Services
                 throw;
             }
         }
+
         // Add method to find recipient by name or create a new one
+
         public async Task<Recipient> FindOrCreateRecipientAsync(string name, string userId)
         {
             _logger.LogInformation($"Finding or creating recipient with name {name} for user {userId}");
@@ -311,7 +357,8 @@ namespace RemittanceAPI.Services
             {
                 Id = Guid.NewGuid().ToString(),
                 Name = name,
-                Country = "Unknown" // Default value
+                Country = "Unknown", // Default value
+                SenderId = userId // Set the sender ID to track who created this recipient
             };
 
             await _dbContext.Recipients.AddAsync(newRecipient);
@@ -322,9 +369,10 @@ namespace RemittanceAPI.Services
                 user.SavedRecipients = new List<string>();
             }
             user.SavedRecipients.Add(newRecipient.Id);
+            _dbContext.Users.Update(user); // Explicitly update the user entity
 
             await _dbContext.SaveChangesAsync();
-            _logger.LogInformation($"Created new recipient: {newRecipient.Id}");
+            _logger.LogInformation($"Created new recipient: {newRecipient.Id} and added to user {userId} saved recipients");
 
             return newRecipient;
         }

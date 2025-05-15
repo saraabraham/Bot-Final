@@ -417,10 +417,11 @@ export class ChatService {
         });
     }
 
-    // Process "send money" command
+    // Process "send money" command (improved version)
     private processSendMoneyCommand(text: string, botMessageId: string): Observable<BotCommand> {
         // Try to extract recipient and amount from the command
-        const sendMoneyMatch = text.match(/(?:send|transfer|remit|pay)(?:\s+(?:\$?\s*)?([\d,.]+))?(?:\s*(?:dollars|euros?|pounds?|usd|eur|gbp))?(?:\s+(?:to|for)\s+)([a-z\s]+)/i);
+        // Improved regex to capture more variations of the send money command
+        const sendMoneyMatch = text.match(/(?:send|transfer|remit|pay)(?:\s+(?:\$?\s*)?([\d,.]+))?(?:\s*(?:dollars|euros?|pounds?|usd|eur|gbp))?(?:\s+(?:to|for)\s+)?([a-z\s]+)/i);
 
         let recipientName = '';
         let amount = 0;
@@ -432,6 +433,17 @@ export class ChatService {
             // Extract amount if available
             if (sendMoneyMatch[1]) {
                 amount = parseFloat(sendMoneyMatch[1].replace(/,/g, ''));
+            }
+        } else {
+            // Try alternative pattern without "to" or "for"
+            const altMatch = text.match(/(?:send|transfer|remit|pay)(?:\s+(?:\$?\s*)?([\d,.]+))?(?:\s*(?:dollars|euros?|pounds?|usd|eur|gbp))?(?:\s+)([a-z\s]+)/i);
+
+            if (altMatch && altMatch[2]) {
+                recipientName = altMatch[2].trim();
+
+                if (altMatch[1]) {
+                    amount = parseFloat(altMatch[1].replace(/,/g, ''));
+                }
             }
         }
 
@@ -463,13 +475,13 @@ export class ChatService {
             let responseText: string;
 
             if (amount > 0) {
-                responseText = `I found ${recipientName} in your saved recipients. You want to send ${amount}. What currency would you like to use? (Default is USD)`;
+                responseText = `I found ${existingRecipient.name} in your saved recipients. You want to send ${amount}. What currency would you like to use? (Default is USD)`;
 
                 // Set up conversation state to collect currency
                 this.setConversationState({
                     flow: 'send_money',
                     tempRecipient: {
-                        name: recipientName,
+                        name: existingRecipient.name,
                         id: existingRecipient.id,
                         accountNumber: existingRecipient.accountNumber || '',
                         bankName: existingRecipient.bankName || '',
@@ -483,13 +495,13 @@ export class ChatService {
                     collectingField: 'currency'
                 });
             } else {
-                responseText = `I found ${recipientName} in your saved recipients. How much would you like to send to ${recipientName}?`;
+                responseText = `I found ${existingRecipient.name} in your saved recipients. How much would you like to send to ${existingRecipient.name}?`;
 
                 // Set up conversation state to collect amount
                 this.setConversationState({
                     flow: 'send_money',
                     tempRecipient: {
-                        name: recipientName,
+                        name: existingRecipient.name,
                         id: existingRecipient.id,
                         accountNumber: existingRecipient.accountNumber || '',
                         bankName: existingRecipient.bankName || '',
@@ -508,7 +520,7 @@ export class ChatService {
             return of({
                 intent: 'send_money',
                 entities: {
-                    recipient: recipientName,
+                    recipient: existingRecipient.name,
                     recipientExists: true,
                     amount: amount > 0 ? amount : undefined
                 },
@@ -555,6 +567,17 @@ export class ChatService {
                 text: responseText
             });
         }
+    }
+
+    getChatHistory(): Observable<ChatMessage[]> {
+        const apiUrl = `${environment.apiUrl}/chat`;
+        return this.http.get<ChatMessage[]>(`${apiUrl}/history`)
+            .pipe(
+                catchError(error => {
+                    console.error('Error fetching chat history:', error);
+                    return of([]);
+                })
+            );
     }
 
     // Process "deposit" command
@@ -1400,14 +1423,27 @@ export class ChatService {
     }
 
     // Helper method to find a recipient by name
+    // Method to find a recipient by name (improved version)
     private findRecipientByName(name: string): Recipient | null {
         if (!name || !this.cachedRecipients.length) return null;
 
-        // Compare case-insensitively
+        // Normalize name for comparison
         const normalizedName = name.toLowerCase().trim();
-        return this.cachedRecipients.find(r =>
+
+        // First try exact match (case-insensitive)
+        const exactMatch = this.cachedRecipients.find(r =>
             r.name.toLowerCase().trim() === normalizedName
-        ) || null;
+        );
+
+        if (exactMatch) return exactMatch;
+
+        // Then try "contains" match for partial names or nicknames
+        const partialMatch = this.cachedRecipients.find(r =>
+            r.name.toLowerCase().includes(normalizedName) ||
+            normalizedName.includes(r.name.toLowerCase())
+        );
+
+        return partialMatch || null;
     }
 
     // Helper method to check if a recipient has complete details

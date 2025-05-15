@@ -5,6 +5,8 @@ import { catchError, tap } from 'rxjs/operators';
 import { RemittanceTransaction, Recipient } from '../models/remittance.model';
 import { environment } from '../../environments/environment';
 import { delay, map } from 'rxjs/operators';
+import { AuthService } from './auth.service'; // Import AuthService
+
 
 
 // Add this interface
@@ -66,7 +68,7 @@ export interface DepositResponse {
 export class RemittanceService {
     private apiUrl = `${environment.apiUrl}/remittance`;
 
-    constructor(private http: HttpClient) { }
+    constructor(private http: HttpClient, private authService: AuthService) { }
 
     private handleError(error: HttpErrorResponse) {
         console.error('API Error:', error);
@@ -108,8 +110,9 @@ export class RemittanceService {
             );
     }
 
-    // Add method to find or create a recipient
+    // Update findOrCreateRecipient method
     findOrCreateRecipient(name: string): Observable<Recipient> {
+        // Make sure to include auth service dependency and inject it
         return this.http.post<Recipient>(`${this.apiUrl}/recipients/find-or-create`, { name })
             .pipe(
                 tap(recipient => console.log('Recipient found or created:', recipient)),
@@ -143,19 +146,24 @@ export class RemittanceService {
 
     saveRecipient(recipient: Recipient): Observable<Recipient> {
         console.log('Saving recipient:', recipient);
+
+        // Set sender ID if not already set
+        if (!recipient.senderId && this.authService?.currentUser?.id) {
+            recipient.senderId = this.authService.currentUser.id;
+        }
+
         return this.http.post<Recipient>(`${this.apiUrl}/recipients`, recipient)
             .pipe(
                 tap(saved => console.log('Recipient saved:', saved)),
                 catchError(this.handleError)
             );
     }
-
     sendMoney(transaction: RemittanceTransaction): Observable<RemittanceTransaction> {
         console.log('Sending transaction:', transaction);
         // Validate transaction data before sending to the server
         const validationErrors: string[] = [];
 
-        if (!transaction.recipient || !transaction.recipient.id) {
+        if (!transaction.recipient || !transaction.recipient.name) {
             validationErrors.push('Missing recipient information');
         }
 
@@ -177,6 +185,16 @@ export class RemittanceService {
             return throwError(() => new Error(validationErrors.join('. ')));
         }
 
+        // Set sender ID if not already set
+        if (!transaction.senderId && this.authService?.currentUser?.id) {
+            transaction.senderId = this.authService.currentUser.id;
+        }
+
+        // Ensure recipient has a sender ID (to connect it to the user)
+        if (transaction.recipient && !transaction.recipient.senderId && this.authService?.currentUser?.id) {
+            transaction.recipient.senderId = this.authService.currentUser.id;
+        }
+
         // Format dates correctly for backend
         const formattedTransaction = {
             ...transaction,
@@ -189,7 +207,6 @@ export class RemittanceService {
                 catchError(this.handleError)
             );
     }
-
 
     getTransactionHistory(): Observable<RemittanceTransaction[]> {
         console.log('Getting transaction history from real backend');
