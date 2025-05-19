@@ -1,4 +1,5 @@
-// Update the ChatbotService.cs
+// Enhanced ChatbotService.cs with better intent recognition
+// Add these improved intent patterns and methods
 
 using System;
 using System.Collections.Generic;
@@ -13,145 +14,88 @@ using RemittanceAPI.Models;
 
 namespace RemittanceAPI.Services
 {
-    public class ChatbotService
+    public partial class ChatbotService
     {
         private readonly ILogger<ChatbotService> _logger;
         private readonly RemittanceDbContext _dbContext;
         private readonly RemittanceService _remittanceService;
         private readonly Dictionary<string, Regex> _intents;
 
+        // Enhanced constructor with better intent patterns
         public ChatbotService(
             ILogger<ChatbotService> logger,
             RemittanceDbContext dbContext,
-            RemittanceService remittanceService) // Inject RemittanceService
+            RemittanceService remittanceService)
         {
             _logger = logger;
             _dbContext = dbContext;
             _remittanceService = remittanceService;
 
-            // Enhanced intent patterns including deposit and money transfer detection
+            // Enhanced intent patterns with better coverage
             _intents = new Dictionary<string, Regex>
             {
-                { "greeting", new Regex(@"(hello|hi|hey|greetings)", RegexOptions.IgnoreCase) },
-                { "send_money", new Regex(@"(?:send|transfer|remit)\s+(?:(?:\$?\s*)?(\[\d,.\]+))?\s*(?:dollars|euro|pound|usd|eur|gbp)?\s+(?:to\s+)(\w+)", RegexOptions.IgnoreCase) },
-                { "deposit", new Regex(@"(deposit|add\s+money|add\s+funds|load\s+money|put\s+in|top\s+up)\s+(?:(?:\$?\s*)?(\[\d,.\]+))?\s*(?:dollars|euro|pound|usd|eur|gbp)?", RegexOptions.IgnoreCase) },
-                { "check_balance", new Regex(@"(balance|how\s+much|available\s+funds|account\s+balance)", RegexOptions.IgnoreCase) },
-                { "check_rates", new Regex(@"(rate|exchange|conversion|convert)\s*(\w{3})?\s*(to|and)\s*(\w{3})?", RegexOptions.IgnoreCase) },
-                { "get_recipients", new Regex(@"(recipient|beneficiary|receiver|payee)s?", RegexOptions.IgnoreCase) },
-                { "check_status", new Regex(@"(status|track|where).*?(transaction|transfer|money)", RegexOptions.IgnoreCase) },
-                { "help", new Regex(@"(help|support|how to|guide|explain)", RegexOptions.IgnoreCase) }
+                // Greeting patterns
+                { "greeting", new Regex(@"\b(hello|hi|hey|greetings|good morning|good afternoon|good evening)\b", RegexOptions.IgnoreCase) },
+                
+                // Send money patterns (improved to handle various formats)
+                { "send_money", new Regex(@"\b(send|transfer|remit|pay)\b.*(?:\$?\d+(?:\.\d{2})?|\d+\s*(?:dollars?|usd|euros?|eur|pounds?|gbp)).*\b(to|for)\b", RegexOptions.IgnoreCase) },
+                { "send_money_simple", new Regex(@"\b(send|transfer|remit|pay)\s+(money|funds|cash)\b", RegexOptions.IgnoreCase) },
+                
+                // Deposit patterns
+                { "deposit", new Regex(@"\b(deposit|add\s+money|add\s+funds|load\s+money|put\s+in|top\s+up)\b", RegexOptions.IgnoreCase) },
+                
+                // Balance check patterns  
+                { "check_balance", new Regex(@"\b(balance|how\s+much|available\s+funds|account\s+balance|check\s+balance|show\s+balance|my\s+balance)\b", RegexOptions.IgnoreCase) },
+                
+                // Exchange rates patterns (IMPROVED)
+                { "check_rates", new Regex(@"\b(rate|rates|exchange|conversion|convert|currency\s+rate|exchange\s+rate|currency\s+exchange|check\s+rate)\b", RegexOptions.IgnoreCase) },
+                
+                // Recipients management patterns (IMPROVED)  
+                { "manage_recipients", new Regex(@"\b(recipient|recipients|beneficiary|beneficiaries|receiver|receivers|payee|payees|manage\s+recipient|show\s+recipient|list\s+recipient|my\s+recipient)\b", RegexOptions.IgnoreCase) },
+                
+                // Transaction status
+                { "check_status", new Regex(@"\b(status|track|where).*?(transaction|transfer|money|payment)\b", RegexOptions.IgnoreCase) },
+                
+                // Help patterns
+                { "help", new Regex(@"\b(help|support|how\s+to|guide|explain|what\s+can\s+you\s+do|commands)\b", RegexOptions.IgnoreCase) }
             };
         }
 
-        public async Task<BotCommand> ProcessMessageAsync(string message, string userId = null)
-        {
-            _logger.LogInformation($"Processing message: {message}");
-
-            // Save user message if userId is provided
-            if (!string.IsNullOrEmpty(userId))
-            {
-                await SaveUserMessageAsync(userId, message);
-            }
-
-            // Detect intent and extract entities
-            var (intent, entities, confidence) = IdentifyIntent(message);
-
-            // Log the identified intent
-            _logger.LogInformation($"Identified intent: {intent} with confidence: {confidence}");
-
-            // Enhanced handling of intents
-            var response = await GenerateResponseAsync(intent, entities, userId);
-
-            // Save bot response
-            if (!string.IsNullOrEmpty(userId))
-            {
-                await SaveBotMessageAsync(userId, response);
-            }
-
-            return new BotCommand
-            {
-                Intent = intent,
-                Entities = entities,
-                Confidence = confidence,
-                Text = response
-            };
-        }
-
-        public async Task<BotCommand> ProcessVoiceAsync(Stream audioStream, string userId = null)
-        {
-            _logger.LogInformation("Processing voice input");
-
-            // In a real implementation, this would use a Speech-to-Text service
-            // For this example, we'll simulate a basic response
-
-            // Simulated transcription (in real app, we'd send to Google/Azure/AWS STT)
-            string transcription = "send 500 dollars to John";
-
-            // Save user message if userId is provided
-            if (!string.IsNullOrEmpty(userId))
-            {
-                await SaveUserMessageAsync(userId, $"🎤 {transcription}");
-            }
-
-            // Process the transcribed text
-            var (intent, entities, confidence) = IdentifyIntent(transcription);
-
-            // Generate response with enhanced functionality
-            var response = await GenerateResponseAsync(intent, entities, userId);
-
-            // Save bot response
-            if (!string.IsNullOrEmpty(userId))
-            {
-                await SaveBotMessageAsync(userId, response);
-            }
-
-            return new BotCommand
-            {
-                Intent = intent,
-                Entities = entities,
-                Confidence = confidence,
-                Text = transcription // Include the transcribed text in the response
-            };
-        }
-
-        // Update this part of IdentifyIntent method in ChatbotService.cs
-
+        // Enhanced intent identification method
         private (string intent, Dictionary<string, object> entities, double confidence) IdentifyIntent(string message)
         {
-            // Default values
             string bestIntent = "unknown";
             double bestConfidence = 0;
             var entities = new Dictionary<string, object>();
 
-            // Check for single word commands first
+            // Normalize message for better matching
             string lowerMessage = message.Trim().ToLower();
 
-            // Handle one-word deposit command
-            if (lowerMessage == "deposit")
+            // Remove common filler words that might interfere
+            string cleanedMessage = Regex.Replace(lowerMessage, @"\b(please|can|could|would|like|want|to|the|a|an|my)\b", " ", RegexOptions.IgnoreCase).Trim();
+            cleanedMessage = Regex.Replace(cleanedMessage, @"\s+", " "); // Remove extra spaces
+
+            _logger.LogInformation($"Processing message: '{message}' -> cleaned: '{cleanedMessage}'");
+
+            // Check for specific single-word or phrase commands first
+            if (IsExchangeRateQuery(lowerMessage))
             {
-                return ("deposit", new Dictionary<string, object>(), 1.0);
+                return ProcessExchangeRateQuery(message);
             }
 
-            // Handle "send money" simple command
-            if (lowerMessage == "send" || lowerMessage == "send money")
+            if (IsRecipientManagementQuery(lowerMessage))
             {
-                return ("send_money", new Dictionary<string, object>(), 1.0);
-            }
-
-            // Handle "check balance" simple command
-            if (lowerMessage == "balance" || lowerMessage == "check balance")
-            {
-                return ("check_balance", new Dictionary<string, object>(), 1.0);
+                return ProcessRecipientManagementQuery(message);
             }
 
             // Check against each intent pattern
             foreach (var pattern in _intents)
             {
-                var match = pattern.Value.Match(message);
+                var match = pattern.Value.Match(cleanedMessage);
                 if (match.Success)
                 {
-                    // Simple confidence calculation - can be improved with ML models
-                    double confidence = (double)match.Length / message.Length;
+                    // Calculate confidence based on match quality
+                    double confidence = CalculateConfidence(match, cleanedMessage);
 
                     if (confidence > bestConfidence)
                     {
@@ -164,386 +108,261 @@ namespace RemittanceAPI.Services
                 }
             }
 
+            _logger.LogInformation($"Best intent: {bestIntent} with confidence: {bestConfidence}");
             return (bestIntent, entities, bestConfidence);
         }
 
-        private Dictionary<string, object> ExtractEntities(string intent, Match match, string message)
+        // Helper method to check for exchange rate queries
+        private bool IsExchangeRateQuery(string message)
+        {
+            var exchangePatterns = new[]
+            {
+                @"\b(exchange\s+rate|currency\s+rate|rate\s+of|conversion\s+rate)\b",
+                @"\b(usd\s+to\s+eur|eur\s+to\s+usd|gbp\s+to\s+usd|dollar\s+to\s+euro)\b",
+                @"\brate\b.*\b(from|to|between)\b",
+                @"\b(check|show|get|what)\b.*\brate\b",
+                @"\bexchange\b",
+                @"\bconvert\b.*\b(currency|money|dollars|euros|pounds)\b"
+            };
+
+            return exchangePatterns.Any(pattern => Regex.IsMatch(message, pattern, RegexOptions.IgnoreCase));
+        }
+
+        // Helper method to check for recipient management queries
+        private bool IsRecipientManagementQuery(string message)
+        {
+            var recipientPatterns = new[]
+            {
+                @"\b(manage\s+recipient|show\s+recipient|list\s+recipient|my\s+recipient)\b",
+                @"\b(recipient|recipients|beneficiary|beneficiaries)\b",
+                @"\b(saved\s+contact|saved\s+payee|payee)\b",
+                @"\b(who\s+can\s+i\s+send|who\s+do\s+i\s+send)\b",
+                @"\b(add\s+recipient|new\s+recipient|create\s+recipient)\b"
+            };
+
+            return recipientPatterns.Any(pattern => Regex.IsMatch(message, pattern, RegexOptions.IgnoreCase));
+        }
+
+        // Process exchange rate queries
+        private (string intent, Dictionary<string, object> entities, double confidence) ProcessExchangeRateQuery(string message)
         {
             var entities = new Dictionary<string, object>();
 
-            switch (intent)
+            // Try to extract currencies from the message
+            var currencyMatch = Regex.Match(message, @"\b([A-Z]{3})\s+to\s+([A-Z]{3})\b", RegexOptions.IgnoreCase);
+            if (!currencyMatch.Success)
             {
-                case "send_money":
-                    // Enhanced send_money pattern extraction
-                    var sendMoneyMatch = Regex.Match(message, @"(?:send|transfer|remit)\s+(?:(?:\$?\s*)?(\[\d,.\]+))?\s*(?:dollars|euro|pound|usd|eur|gbp)?\s+(?:to\s+)(\w+)", RegexOptions.IgnoreCase);
-
-                    if (sendMoneyMatch.Success)
-                    {
-                        // Extract amount
-                        if (sendMoneyMatch.Groups.Count > 1 && !string.IsNullOrEmpty(sendMoneyMatch.Groups[1].Value))
-                        {
-                            string amountStr = sendMoneyMatch.Groups[1].Value.Replace("$", "").Replace(",", "");
-                            if (decimal.TryParse(amountStr, out decimal amount))
-                            {
-                                entities["amount"] = amount;
-                            }
-                        }
-
-                        // Extract recipient
-                        if (sendMoneyMatch.Groups.Count > 2 && !string.IsNullOrEmpty(sendMoneyMatch.Groups[2].Value))
-                        {
-                            entities["recipient"] = sendMoneyMatch.Groups[2].Value;
-                        }
-                    }
-
-                    // Try to extract currency
-                    var currencyMatch = Regex.Match(message.ToLower(), @"(dollar|usd|euro|eur|pound|gbp)");
-                    if (currencyMatch.Success)
-                    {
-                        string currency = currencyMatch.Groups[1].Value.ToUpper();
-                        switch (currency)
-                        {
-                            case "DOLLAR": entities["currency"] = "USD"; break;
-                            case "EURO": entities["currency"] = "EUR"; break;
-                            case "POUND": entities["currency"] = "GBP"; break;
-                            default: entities["currency"] = currency; break;
-                        }
-                    }
-                    else
-                    {
-                        // Default to USD if no currency specified
-                        entities["currency"] = "USD";
-                    }
-                    break;
-
-                case "deposit":
-                    // Extract amount for deposit
-                    var depositMatch = Regex.Match(message, @"(?:deposit|add\s+money|add\s+funds|load|put\s+in|top\s+up)\s+(?:(?:\$?\s*)?(\[\d,.\]+))?\s*(?:dollars|euro|pound|usd|eur|gbp)?", RegexOptions.IgnoreCase);
-
-                    if (depositMatch.Success && depositMatch.Groups.Count > 1 && !string.IsNullOrEmpty(depositMatch.Groups[1].Value))
-                    {
-                        string amountStr = depositMatch.Groups[1].Value.Replace("$", "").Replace(",", "");
-                        if (decimal.TryParse(amountStr, out decimal amount))
-                        {
-                            entities["amount"] = amount;
-                        }
-                    }
-
-                    // Try to extract currency for deposit
-                    var depositCurrencyMatch = Regex.Match(message.ToLower(), @"(dollar|usd|euro|eur|pound|gbp)");
-                    if (depositCurrencyMatch.Success)
-                    {
-                        string currency = depositCurrencyMatch.Groups[1].Value.ToUpper();
-                        switch (currency)
-                        {
-                            case "DOLLAR": entities["currency"] = "USD"; break;
-                            case "EURO": entities["currency"] = "EUR"; break;
-                            case "POUND": entities["currency"] = "GBP"; break;
-                            default: entities["currency"] = currency; break;
-                        }
-                    }
-                    else
-                    {
-                        // Default to USD if no currency specified
-                        entities["currency"] = "USD";
-                    }
-
-                    // Try to extract payment method
-                    var methodMatch = Regex.Match(message.ToLower(), @"(card|bank|wallet|credit\s+card|debit\s+card)");
-                    if (methodMatch.Success)
-                    {
-                        string method = methodMatch.Groups[1].Value.ToLower();
-                        switch (method)
-                        {
-                            case "credit card":
-                            case "debit card": entities["paymentMethod"] = "card"; break;
-                            default: entities["paymentMethod"] = method; break;
-                        }
-                    }
-                    break;
-
-                case "check_rates":
-                    // Try to extract currencies
-                    var currenciesMatch = Regex.Match(message.ToUpper(), @"(\w{3})?\s*(TO|AND)\s*(\w{3})?");
-                    if (currenciesMatch.Success)
-                    {
-                        if (!string.IsNullOrEmpty(currenciesMatch.Groups[1].Value))
-                        {
-                            entities["fromCurrency"] = currenciesMatch.Groups[1].Value;
-                        }
-
-                        if (!string.IsNullOrEmpty(currenciesMatch.Groups[3].Value))
-                        {
-                            entities["toCurrency"] = currenciesMatch.Groups[3].Value;
-                        }
-                    }
-                    break;
+                currencyMatch = Regex.Match(message, @"\b(dollar|usd|euro|eur|pound|gbp)\s+to\s+(dollar|usd|euro|eur|pound|gbp)\b", RegexOptions.IgnoreCase);
             }
 
-            return entities;
+            if (currencyMatch.Success)
+            {
+                entities["fromCurrency"] = NormalizeCurrency(currencyMatch.Groups[1].Value);
+                entities["toCurrency"] = NormalizeCurrency(currencyMatch.Groups[2].Value);
+            }
+            else
+            {
+                // Default currencies if not specified
+                entities["fromCurrency"] = "USD";
+                entities["toCurrency"] = "EUR";
+            }
+
+            return ("check_rates", entities, 0.9);
         }
 
-        // Updated to async to support balance checking and recipient validation
+        // Process recipient management queries
+        private (string intent, Dictionary<string, object> entities, double confidence) ProcessRecipientManagementQuery(string message)
+        {
+            var entities = new Dictionary<string, object>();
+
+            // Check if it's about adding a new recipient
+            if (Regex.IsMatch(message, @"\b(add|new|create)\b.*\brecipient\b", RegexOptions.IgnoreCase))
+            {
+                entities["action"] = "add";
+            }
+            else
+            {
+                entities["action"] = "list";
+            }
+
+            return ("manage_recipients", entities, 0.9);
+        }
+
+        // Helper method to normalize currency names
+        private string NormalizeCurrency(string currency)
+        {
+            var currencyMap = new Dictionary<string, string>
+            {
+                {"dollar", "USD"}, {"dollars", "USD"}, {"usd", "USD"},
+                {"euro", "EUR"}, {"euros", "EUR"}, {"eur", "EUR"},
+                {"pound", "GBP"}, {"pounds", "GBP"}, {"gbp", "GBP"},
+                {"rupee", "INR"}, {"rupees", "INR"}, {"inr", "INR"}
+            };
+
+            return currencyMap.GetValueOrDefault(currency.ToLower(), currency.ToUpper());
+        }
+
+        // Helper method to calculate confidence score
+        private double CalculateConfidence(Match match, string message)
+        {
+            // Base confidence on match length relative to message length
+            double confidence = (double)match.Length / message.Length;
+
+            // Boost confidence for exact keyword matches
+            if (match.Value.Contains("exchange") || match.Value.Contains("rate"))
+                confidence += 0.2;
+            if (match.Value.Contains("recipient") || match.Value.Contains("manage"))
+                confidence += 0.2;
+
+            // Cap confidence at 1.0
+            return Math.Min(confidence, 1.0);
+        }
+
+        // Enhanced response generation
         public async Task<string> GenerateResponseAsync(string intent, Dictionary<string, object> entities, string userId)
         {
-            // Generate appropriate response based on intent and entities
             switch (intent)
             {
-                case "greeting":
-                    return "Hello! How can I help you with your money transfer today?";
-
-                case "deposit":
-                    if (string.IsNullOrEmpty(userId))
-                    {
-                        string amount = entities.TryGetValue("amount", out var amtVal)
-                            ? amtVal.ToString()
-                            : "some money";
-
-                        string currency = entities.TryGetValue("currency", out var currVal)
-                            ? currVal.ToString()
-                            : "USD";
-
-                        return $"I'd like to help you deposit {amount} {currency} into your account. Please log in to continue.";
-                    }
-
-                    // Enhanced response for deposit
-                    try
-                    {
-                        // Check if we have amount
-                        if (!entities.TryGetValue("amount", out var amtVal))
-                        {
-                            return "I need to know how much you'd like to deposit. " +
-                                   "Please say something like 'deposit 100 dollars'.";
-                        }
-
-                        decimal amount = decimal.Parse(amtVal.ToString());
-                        string currency = entities.TryGetValue("currency", out var currVal)
-                            ? currVal.ToString()
-                            : "USD";
-
-                        string paymentMethod = entities.TryGetValue("paymentMethod", out var methodVal)
-                            ? methodVal.ToString()
-                            : "card";
-
-                        return $"I can help you deposit {amount} {currency} using {paymentMethod}. " +
-                               "Would you like to proceed with this deposit?";
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogError(ex, "Error processing deposit command");
-                        return "I'm having trouble processing your deposit request. Please try again later.";
-                    }
-
-                case "send_money":
-                    if (string.IsNullOrEmpty(userId))
-                    {
-                        string amount = entities.TryGetValue("amount", out var amtVal)
-                            ? amtVal.ToString()
-                            : "some money";
-
-                        string currency = entities.TryGetValue("currency", out var currVal)
-                            ? currVal.ToString()
-                            : "USD";
-
-                        string recipient = entities.TryGetValue("recipient", out var recVal)
-                            ? recVal.ToString()
-                            : "someone";
-
-                        return $"I'll help you send {amount} {currency} to {recipient}. Please log in to continue.";
-                    }
-
-                    // Enhanced response with balance check and recipient validation
-                    try
-                    {
-                        // Check if we have amount and recipient
-                        if (!entities.TryGetValue("amount", out var amtVal) || !entities.TryGetValue("recipient", out var recVal))
-                        {
-                            return "I need to know how much you want to send and to whom. " +
-                                   "Please say something like 'send 100 dollars to John'.";
-                        }
-
-                        decimal amount = decimal.Parse(amtVal.ToString());
-                        string recipientName = recVal.ToString();
-                        string currency = entities.TryGetValue("currency", out var currVal)
-                            ? currVal.ToString()
-                            : "USD";
-
-                        // Check user balance
-                        var balanceResponse = await _remittanceService.CheckUserBalanceAsync(userId);
-
-                        // Simple currency conversion for check
-                        decimal amountInUserCurrency = amount;
-                        if (currency != balanceResponse.Currency)
-                        {
-                            var rate = await _remittanceService.GetExchangeRateAsync(currency, balanceResponse.Currency);
-                            amountInUserCurrency = amount * rate.Rate;
-                        }
-
-                        // Add fees (approximately)
-                        var fees = await _remittanceService.CalculateFeesAsync(amount, currency, "bank");
-                        decimal totalWithFees = amount + fees.Fees;
-                        decimal totalInUserCurrency = amountInUserCurrency + (fees.Fees * amount / amountInUserCurrency);
-
-                        // Check if sufficient balance
-                        if (balanceResponse.Balance < totalInUserCurrency)
-                        {
-                            return $"I'm sorry, you don't have enough balance to send {amount} {currency}. " +
-                                   $"Your current balance is {balanceResponse.Balance} {balanceResponse.Currency}, " +
-                                   $"but you need approximately {totalInUserCurrency} {balanceResponse.Currency} (including fees).";
-                        }
-
-                        // Check if recipient exists among saved recipients
-                        var (recipientExists, existingRecipient) = await CheckRecipientExistsAsync(recipientName, userId);
-
-                        if (!recipientExists)
-                        {
-                            return $"I'd like to send {amount} {currency} to {recipientName}, but they're not in your saved recipients list. " +
-                                   $"This will cost approximately {totalWithFees} {currency} including a fee of {fees.Fees} {currency}. " +
-                                   $"Would you like to add {recipientName} as a new recipient?";
-                        }
-                        else
-                        {
-                            // Recipient exists, check if their details are complete
-                            if (string.IsNullOrEmpty(existingRecipient.AccountNumber) || existingRecipient.Country == "Unknown")
-                            {
-                                return $"I found {recipientName} in your recipients list, but their details are incomplete. " +
-                                       $"I can send {amount} {currency} to them, which will cost approximately {totalWithFees} {currency} including fees. " +
-                                       $"Would you like to complete their profile first?";
-                            }
-
-                            return $"I can send {amount} {currency} to your saved recipient {recipientName}. " +
-                                   $"This will cost approximately {totalWithFees} {currency} including a fee of {fees.Fees} {currency}. " +
-                                   $"Your balance after this transaction would be about {balanceResponse.Balance - totalInUserCurrency} {balanceResponse.Currency}. " +
-                                   $"Shall I proceed with the transfer?";
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogError(ex, "Error processing send money command");
-                        return "I'm having trouble processing your request. Please try again later.";
-                    }
-
-                case "check_balance":
-                    if (string.IsNullOrEmpty(userId))
-                    {
-                        return "You need to log in to check your balance.";
-                    }
-
-                    try
-                    {
-                        var balance = await _remittanceService.CheckUserBalanceAsync(userId);
-                        return $"Your current balance is {balance.Balance} {balance.Currency}.";
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogError(ex, "Error checking balance");
-                        return "I'm having trouble retrieving your balance. Please try again later.";
-                    }
-
                 case "check_rates":
-                    string fromCurrency = entities.TryGetValue("fromCurrency", out var fromCurr)
-                        ? fromCurr.ToString()
-                        : "USD";
+                    return await HandleExchangeRateRequest(entities);
 
-                    string toCurrency = entities.TryGetValue("toCurrency", out var toCurr)
-                        ? toCurr.ToString()
-                        : "EUR";
+                case "manage_recipients":
+                    return await HandleRecipientManagementRequest(entities, userId);
 
-                    try
-                    {
-                        var rate = await _remittanceService.GetExchangeRateAsync(fromCurrency, toCurrency);
-                        return $"The current exchange rate from {fromCurrency} to {toCurrency} is {rate.Rate}.";
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogError(ex, $"Error getting exchange rate from {fromCurrency} to {toCurrency}");
-                        return "I'm having trouble getting the exchange rate. Please try again later.";
-                    }
+                case "greeting":
+                    return "Hello! I'm your remittance assistant. I can help you:\n" +
+                           "• Send money to recipients\n" +
+                           "• Check exchange rates\n" +
+                           "• Manage your recipients\n" +
+                           "• Deposit money\n" +
+                           "• Check your balance\n" +
+                           "What would you like to do today?";
 
                 case "help":
-                    return "I can help you send money, check your balance, deposit funds, look up exchange rates, manage recipients, and track transactions. What would you like to do?";
+                    return "I can help you with:\n" +
+                           "• **Send money** - Say 'send $100 to John' or 'transfer money'\n" +
+                           "• **Check rates** - Say 'exchange rate' or 'USD to EUR rate'\n" +
+                           "• **Manage recipients** - Say 'show recipients' or 'manage recipients'\n" +
+                           "• **Deposit money** - Say 'deposit $50' or 'add money'\n" +
+                           "• **Check balance** - Say 'check balance' or 'my balance'\n" +
+                           "• **Transaction status** - Say 'check status' or 'track transfer'\n\n" +
+                           "You can also use voice commands by clicking the microphone button!";
 
                 default:
-                    return "I'm not sure I understand. Could you rephrase or tell me if you want to send money, deposit funds, check rates, or manage recipients?";
+                    return "I'm not sure I understand that command. Try saying:\n" +
+                           "• 'Send money' or 'transfer funds'\n" +
+                           "• 'Check exchange rates' or 'currency rates'\n" +
+                           "• 'Show recipients' or 'manage recipients'\n" +
+                           "• 'Deposit money' or 'add funds'\n" +
+                           "• 'Check balance'\n" +
+                           "• 'Help' for more information";
             }
         }
 
-        // The rest of the ChatbotService methods remain the same
-        public async Task<ChatMessage> SaveUserMessageAsync(string userId, string text)
-        {
-            var message = new ChatMessage
-            {
-                Text = text,
-                Sender = "user",
-                Timestamp = DateTime.UtcNow,
-                UserId = userId
-            };
-
-            await _dbContext.ChatMessages.AddAsync(message);
-            await _dbContext.SaveChangesAsync();
-
-            return message;
-        }
-
-        public async Task<ChatMessage> SaveBotMessageAsync(string userId, string text)
-        {
-            var message = new ChatMessage
-            {
-                Text = text,
-                Sender = "bot",
-                Timestamp = DateTime.UtcNow,
-                UserId = userId
-            };
-
-            await _dbContext.ChatMessages.AddAsync(message);
-            await _dbContext.SaveChangesAsync();
-
-            return message;
-        }
-
-        public async Task<IEnumerable<ChatMessage>> GetChatHistoryAsync(string userId, int limit = 50)
-        {
-            return await _dbContext.ChatMessages
-                .Where(m => m.UserId == userId)
-                .OrderByDescending(m => m.Timestamp)
-                .Take(limit)
-                .OrderBy(m => m.Timestamp)
-                .ToListAsync();
-        }
-
-        // Add this method to ChatbotService.cs to check if a recipient exists
-        private async Task<(bool exists, Recipient recipient)> CheckRecipientExistsAsync(string recipientName, string userId)
+        // Handle exchange rate requests
+        private async Task<string> HandleExchangeRateRequest(Dictionary<string, object> entities)
         {
             try
             {
-                if (string.IsNullOrEmpty(userId))
-                {
-                    return (false, null);
-                }
+                string fromCurrency = entities.GetValueOrDefault("fromCurrency", "USD").ToString();
+                string toCurrency = entities.GetValueOrDefault("toCurrency", "EUR").ToString();
 
-                // Get the user's saved recipients
-                var user = await _dbContext.Users.FirstOrDefaultAsync(u => u.Id == userId);
-                if (user == null || user.SavedRecipients == null || user.SavedRecipients.Count == 0)
-                {
-                    return (false, null);
-                }
+                var rate = await _remittanceService.GetExchangeRateAsync(fromCurrency, toCurrency);
 
-                // Get all recipients
-                var savedRecipients = await _dbContext.Recipients
-                    .Where(r => user.SavedRecipients.Contains(r.Id))
-                    .ToListAsync();
-
-                // Look for a match (case-insensitive)
-                var matchedRecipient = savedRecipients.FirstOrDefault(r =>
-                    r.Name.Equals(recipientName, StringComparison.OrdinalIgnoreCase));
-
-                return matchedRecipient != null ? (true, matchedRecipient) : (false, null);
+                return $"💱 **Current Exchange Rate**\n" +
+                       $"1 {fromCurrency} = {rate.Rate:F4} {toCurrency}\n\n" +
+                       $"Would you like to:\n" +
+                       $"• Check other currency rates\n" +
+                       $"• Send money using this rate\n" +
+                       $"• View detailed exchange information";
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, $"Error checking if recipient {recipientName} exists for user {userId}");
-                throw;
+                _logger.LogError(ex, "Error getting exchange rate");
+                return "I'm having trouble getting current exchange rates. Please try again in a moment, or specify the currencies you'd like to convert (e.g., 'USD to EUR rate').";
             }
         }
+        // Helper method to determine if a command is complete
+        private isCompleteCommand(transcript: string) : boolean {
+  const lowerTranscript = transcript.toLowerCase().trim();
+
+        // Define patterns for complete commands
+        const completeCommandPatterns = [
+          // Send money commands with amount and recipient
+    /send\s+\$?\d+.*to\s+\w+/,
+    /transfer\s+\$?\d+.*to\s+\w+/,
+    /pay\s+\$?\d+.*to\s+\w+/,
+    
+    // Deposit commands with amount
+    /deposit\s+\$?\d+/,
+    /add\s+\$?\d+/,
+    
+    // Simple complete commands
+    /^(check\s+balance|show\s+balance|my\s+balance)$/,
+    /^(exchange\s+rate|currency\s+rate|check\s+rate)$/,
+    /^(show\s+recipients|manage\s+recipients|my\s+recipients)$/,
+    /^(help|what\s+can\s+you\s+do)$/,
+    
+    // More complex but complete patterns
+    /send\s+.*\s+to\s+\w+\s+using\s+\w+/,
+    /deposit\s+\$?\d+\s+using\s+\w+/,
+  ];
+  
+  const isComplete = completeCommandPatterns.some(pattern => pattern.test(lowerTranscript));
+    console.log(`Command "${transcript}" is ${isComplete? 'complete' : 'incomplete'}`);
+
+return isComplete;
+}
+
+
+        // Handle recipient management requests
+        private async Task<string> HandleRecipientManagementRequest(Dictionary<string, object> entities, string userId)
+{
+    try
+    {
+        if (string.IsNullOrEmpty(userId))
+        {
+            return "Please log in to manage your recipients.";
+        }
+
+        string action = entities.GetValueOrDefault("action", "list").ToString();
+
+        if (action == "add")
+        {
+            return "I can help you add a new recipient! Please provide:\n" +
+                   "• Recipient's name\n" +
+                   "• Account number\n" +
+                   "• Bank name\n" +
+                   "• Country\n\n" +
+                   "You can start by saying 'Add [Name] as recipient' or go to the send money form to add them during a transaction.";
+        }
+        else
+        {
+            var recipients = await _remittanceService.GetSavedRecipientsAsync(userId);
+
+            if (!recipients.Any())
+            {
+                return "You don't have any saved recipients yet.\n\n" +
+                       "You can add recipients by:\n" +
+                       "• Starting a money transfer\n" +
+                       "• Saying 'add new recipient'\n" +
+                       "• Using the send money form";
+            }
+
+            var recipientList = string.Join("\n", recipients.Select((r, i) =>
+                $"**{i + 1}. {r.Name}**\n" +
+                $"   📍 {r.Country}\n" +
+                $"   🏦 {r.BankName ?? "Bank not specified"}\n"));
+
+            return $"👥 **Your Saved Recipients** ({recipients.Count()})\n\n{recipientList}\n\n" +
+                   "You can send money to any of these recipients or add a new one!";
+        }
+    }
+    catch (Exception ex)
+    {
+        _logger.LogError(ex, "Error handling recipient management request");
+        return "I'm having trouble accessing your recipients right now. Please try again in a moment.";
+    }
+}
     }
 }

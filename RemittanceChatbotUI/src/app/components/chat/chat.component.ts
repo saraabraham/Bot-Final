@@ -136,22 +136,71 @@ export class ChatComponent implements OnInit, OnDestroy, AfterViewChecked {
                 }
             });
 
-        // Voice transcripts subscription
         this.voiceService.transcript$
             .pipe(takeUntil(this.destroy$))
             .subscribe(transcript => {
                 if (!transcript) return;
 
-                // Set the transcript as the current value in the input field
+                console.log('Received transcript:', transcript);
+
+                // Update the input field with the current transcript
                 this.newMessage = transcript;
                 this.lastTranscript = transcript;
 
-                // Update the listening message with the transcript
-                this.updateListeningMessage(transcript);
+                // Update the listening message to show what was captured
+                if (this.currentListeningMessageId) {
+                    this.updateBotMessage(this.currentListeningMessageId, `🎤 Captured: "${transcript}"`);
+                }
 
-                // Automatically stop listening after getting certain commands
-                if (this.shouldStopListeningForCommand(transcript)) {
-                    this.stopVoiceRecognition();
+                // Check if this looks like a complete command
+                if (this.isCompleteCommand(transcript)) {
+                    console.log('Complete command detected, stopping recognition...');
+                    // Add a small delay to ensure we capture the full command
+                    setTimeout(() => {
+                        this.stopVoiceRecognition();
+                    }, 1000);
+                }
+            });
+
+        // Enhanced listening status subscription
+        this.voiceService.isListening$
+            .pipe(takeUntil(this.destroy$))
+            .subscribe(isListening => {
+                this.isListening = isListening;
+
+                // When recognition stops, process the final transcript
+                if (!isListening && this.lastTranscript && !this.isProcessingVoiceCommand) {
+                    // Clear the listening indicator message
+                    if (this.currentListeningMessageId) {
+                        // Remove the listening message
+                        this.messages = this.messages.filter(msg => msg.id !== this.currentListeningMessageId);
+                        this.currentListeningMessageId = null;
+                    }
+
+                    // Set the final transcript in the input field
+                    this.newMessage = this.lastTranscript;
+                    this.cdRef.detectChanges();
+
+                    // Focus on the input field so user can edit or send
+                    setTimeout(() => {
+                        if (this.messageInput?.nativeElement) {
+                            this.messageInput.nativeElement.focus();
+                        }
+                    }, 100);
+
+                    // Auto-send if it's a complete command, otherwise let user review and send
+                    if (this.isCompleteCommand(this.lastTranscript)) {
+                        console.log('Auto-sending complete voice command:', this.lastTranscript);
+                        setTimeout(() => {
+                            this.sendMessage();
+                        }, 500);
+                    } else {
+                        // Add a helpful message
+                        this.addBotMessage(`I heard: "${this.lastTranscript}". You can edit this message or click Send to proceed.`);
+                    }
+
+                    // Clear the transcript flag
+                    this.lastTranscript = '';
                 }
             });
     }
@@ -324,7 +373,7 @@ export class ChatComponent implements OnInit, OnDestroy, AfterViewChecked {
         console.log('Voice button clicked, current state:', this.isListening ? 'listening' : 'not listening');
 
         if (this.isListening) {
-            // If already listening, just stop
+            // If already listening, stop and process the command
             this.stopVoiceRecognition();
             return;
         }
@@ -351,20 +400,17 @@ export class ChatComponent implements OnInit, OnDestroy, AfterViewChecked {
     // Optimized start voice recognition
     startVoiceRecognition(): void {
         if (!this.voiceRecognitionSupported) {
-            // Show a message to user
             this.addBotMessage('Sorry, voice recognition is not supported in your browser. Please try using Chrome or Edge.');
             return;
         }
 
-        // Save current input value to restore if needed
-        const previousInputValue = this.newMessage;
-
-        // Update input field to show "Listening..."
-        this.newMessage = 'Listening...';
-        this.cdRef.detectChanges();
-
-        // Clear the last transcript
+        // Clear any previous transcript
         this.lastTranscript = '';
+        this.newMessage = '';
+
+        // Add a visual indicator message
+        const listeningMessageId = this.addBotMessage('🎤 Listening... Speak your command now');
+        this.currentListeningMessageId = listeningMessageId;
 
         // Start the voice recognition
         this.voiceService.start();
@@ -390,27 +436,24 @@ export class ChatComponent implements OnInit, OnDestroy, AfterViewChecked {
     stopVoiceRecognition(): void {
         console.log('Stopping voice recognition, transcript:', this.lastTranscript);
 
-        // Store the current transcript before stopping
-        const transcript = this.lastTranscript;
-
         // Stop the recognition service
         this.voiceService.stop();
 
         // Clear the listening state
         this.isListening = false;
 
-        // If we have a transcript, populate the input field with it
-        if (transcript) {
-            this.newMessage = transcript;
-
-            // Focus on the input field
-            setTimeout(() => {
-                if (this.messageInput?.nativeElement) {
-                    this.messageInput.nativeElement.focus();
-                }
-            }, 50);
+        // Get the final transcript from the service
+        const finalTranscript = this.voiceService.getFinalTranscript();
+        if (finalTranscript && finalTranscript !== this.lastTranscript) {
+            console.log('Using final transcript from service:', finalTranscript);
+            this.lastTranscript = finalTranscript;
+            this.newMessage = finalTranscript;
         }
+
+        // Update UI
+        this.cdRef.detectChanges();
     }
+
 
     // Clear chat
     clearChat(): void {

@@ -1,3 +1,5 @@
+/* Enhanced chat.component.scss with improved scrolling */
+
 .chat-container {
     display: flex;
     flex-direction: column;
@@ -58,11 +60,37 @@
     flex: 1;
     padding: 20px;
     overflow-y: auto;
+    overflow-x: hidden;
+    /* Prevent horizontal scrolling */
     background-color: #f5f5f5;
     display: flex;
     flex-direction: column;
+
+    /* CRITICAL: Set explicit height constraints for proper scrolling */
     height: 0;
     min-height: 0;
+
+    /* Improved scrolling behavior */
+    scroll-behavior: smooth;
+
+    /* Custom scrollbar styling */
+    &::-webkit-scrollbar {
+        width: 8px;
+    }
+
+    &::-webkit-scrollbar-track {
+        background: #f1f1f1;
+        border-radius: 10px;
+    }
+
+    &::-webkit-scrollbar-thumb {
+        background: #c1c1c1;
+        border-radius: 10px;
+
+        &:hover {
+            background: #a8a8a8;
+        }
+    }
 
     .user-message,
     .bot-message {
@@ -72,6 +100,11 @@
         border-radius: 18px;
         position: relative;
         word-wrap: break-word;
+        word-break: break-word;
+        /* Ensure long words break */
+
+        /* Preserve formatting for multi-line messages */
+        white-space: pre-wrap;
     }
 
     .user-message {
@@ -87,6 +120,25 @@
         background-color: white;
         color: #333;
         border-bottom-left-radius: 4px;
+
+        /* Better handling of formatted text */
+
+        /* Style for bold text in bot messages */
+        strong {
+            font-weight: 600;
+            color: #0066cc;
+        }
+
+        /* Style for bullet points */
+        ul,
+        ol {
+            margin: 10px 0;
+            padding-left: 20px;
+        }
+
+        li {
+            margin: 5px 0;
+        }
     }
 
     .message-time {
@@ -129,231 +181,6 @@
     border-top: 1px solid #e0e0e0;
     flex-shrink: 0;
 
-    input {
-        flex: 1;
-        padding: 12px 15px;
-        border: 1px solid #ddd;
-        border-radius: 25px;
-        margin-right: 10px;
-        font-size: 1rem;
-
-        &:focus {
-            outline: none;
-            border-color: #0066cc;
-        }
-
-        &:disabled {
-            background-color: #f5f5f5;
-        }
-    }
-
-    button {
-        padding: 0 15px;
-        height: 44px;
-        border-radius: 22px;
-        background-color: #0066cc;
-        color: white;
-        border: none;
-        cursor: pointer;
-        margin-left: 5px;
-        display: flex;
-        justify-content: center;
-        align-items: center;
-        font-size: 0.9rem;
-
-        i {
-            margin-right: 5px;
-        }
-
-        &:disabled {
-            background-color: #cccccc;
-            cursor: not-allowed;
-        }
-
-        &.voice-button {
-            transition: all 0.3s ease;
-
-            &.active {
-                background-color: #e74c3c;
-                /* Red color when active */
-                animation: pulse 1.5s infinite;
-            }
-
-            &:hover:not(:disabled) {
-                background-color: darken(#0066cc, 10%);
-            }
-
-            &.active:hover {
-                background-color: darken(#e74c3c, 10%);
-            }
-        }
-    }
-}
-
-@keyframes dot-pulse {
-
-    0%,
-    100% {
-        transform: scale(1);
-        opacity: 0.6;
-    }
-
-    50% {
-        transform: scale(1.2);
-        opacity: 1;
-    }
-}
-
-@keyframes pulse {
-    0% {
-        box-shadow: 0 0 0 0 rgba(231, 76, 60, 0.7);
-    }
-
-    70% {
-        box-shadow: 0 0 0 10px rgba(231, 76, 60, 0);
-    }
-
-    100% {
-        box-shadow: 0 0 0 0 rgba(231, 76, 60, 0);
-    }
-}
-
-@media (max-width: 768px) {
-    .chat-container {
-        height: calc(100vh - 40px);
-        height: 100vh;
-        max-width: 100%;
-        border-radius: 0;
-    }
-
-    .chat-input {
-        button {
-            span {
-                display: none;
-            }
-
-            i {
-                margin-right: 0;
-            }
-        }
-    }
-}
-
-// For very tall screens, limit maximum height
-@media (min-height: 1000px) {
-    .chat-container {
-        height: 700px; // Slightly taller on very tall screens
-    }
-}
-
-/* Add to chat.component.scss */
-
-.message-actions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-    margin-top: 10px;
-
-    .action-button {
-        padding: 6px 12px;
-        border-radius: 16px;
-        background-color: #f0f2f5;
-        color: #0066cc;
-        border: 1px solid #e0e0e0;
-        font-size: 0.85rem;
-        cursor: pointer;
-        transition: all 0.2s ease;
-
-        &:hover {
-            background-color: #e1ecf9;
-            border-color: #0066cc;
-        }
-    }
-}
-
-/* Style adjustments for action buttons in bot messages */
-.bot-message .message-actions .action-button {
-    background-color: rgba(255, 255, 255, 0.7);
-}
-
-/* Style adjustments for action buttons in user messages */
-.user-message .message-actions .action-button {
-    background-color: rgba(0, 0, 0, 0.1);
-    color: white;
-    border-color: rgba(255, 255, 255, 0.3);
-
-    &:hover {
-        background-color: rgba(0, 0, 0, 0.2);
-        border-color: rgba(255, 255, 255, 0.5);
-    }
-}
-
-/* Add these styles to chat.component.scss */
-
-.voice-button {
-    position: relative;
-    overflow: visible;
-
-    .button-content {
-        display: flex;
-        align-items: center;
-
-        i {
-            margin-right: 5px;
-        }
-    }
-
-    .recording-indicator {
-        position: absolute;
-        top: -20px;
-        left: 50%;
-        transform: translateX(-50%);
-        background-color: rgba(231, 76, 60, 0.9);
-        color: white;
-        padding: 2px 8px;
-        border-radius: 12px;
-        font-size: 0.7rem;
-        white-space: nowrap;
-        display: flex;
-        align-items: center;
-        gap: 4px;
-
-        .recording-dot {
-            width: 6px;
-            height: 6px;
-            background-color: white;
-            border-radius: 50%;
-            display: inline-block;
-            animation: blink 1s infinite;
-        }
-
-        .recording-text {
-            font-weight: 500;
-        }
-    }
-}
-
-@keyframes blink {
-
-    0%,
-    100% {
-        opacity: 1;
-    }
-
-    50% {
-        opacity: 0.3;
-    }
-}
-
-/* Add to chat.component.scss */
-
-.chat-input {
-    display: flex;
-    padding: 15px;
-    background-color: white;
-    border-top: 1px solid #e0e0e0;
-    flex-shrink: 0;
-
     .input-wrapper {
         flex: 1;
         position: relative;
@@ -385,23 +212,6 @@
                 background-color: #e74c3c;
                 margin-right: 6px;
                 animation: pulse 1.5s infinite;
-            }
-
-            @keyframes pulse {
-                0% {
-                    transform: scale(0.8);
-                    opacity: 0.5;
-                }
-
-                50% {
-                    transform: scale(1.2);
-                    opacity: 1;
-                }
-
-                100% {
-                    transform: scale(0.8);
-                    opacity: 0.5;
-                }
             }
         }
     }
@@ -464,5 +274,160 @@
                 background-color: darken(#e74c3c, 10%);
             }
         }
+    }
+}
+
+/* Action buttons for interactive messages */
+.message-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 10px;
+
+    .action-button {
+        padding: 6px 12px;
+        border-radius: 16px;
+        background-color: #f0f2f5;
+        color: #0066cc;
+        border: 1px solid #e0e0e0;
+        font-size: 0.85rem;
+        cursor: pointer;
+        transition: all 0.2s ease;
+
+        &:hover {
+            background-color: #e1ecf9;
+            border-color: #0066cc;
+        }
+    }
+}
+
+/* Voice button enhancements */
+.voice-button {
+    position: relative;
+    overflow: visible;
+
+    .button-content {
+        display: flex;
+        align-items: center;
+
+        i {
+            margin-right: 5px;
+        }
+    }
+
+    .recording-indicator {
+        position: absolute;
+        top: -20px;
+        left: 50%;
+        transform: translateX(-50%);
+        background-color: rgba(231, 76, 60, 0.9);
+        color: white;
+        padding: 2px 8px;
+        border-radius: 12px;
+        font-size: 0.7rem;
+        white-space: nowrap;
+        display: flex;
+        align-items: center;
+        gap: 4px;
+
+        .recording-dot {
+            width: 6px;
+            height: 6px;
+            background-color: white;
+            border-radius: 50%;
+            display: inline-block;
+            animation: blink 1s infinite;
+        }
+
+        .recording-text {
+            font-weight: 500;
+        }
+    }
+}
+
+/* Animations */
+@keyframes dot-pulse {
+
+    0%,
+    100% {
+        transform: scale(1);
+        opacity: 0.6;
+    }
+
+    50% {
+        transform: scale(1.2);
+        opacity: 1;
+    }
+}
+
+@keyframes pulse {
+    0% {
+        box-shadow: 0 0 0 0 rgba(231, 76, 60, 0.7);
+    }
+
+    70% {
+        box-shadow: 0 0 0 10px rgba(231, 76, 60, 0);
+    }
+
+    100% {
+        box-shadow: 0 0 0 0 rgba(231, 76, 60, 0);
+    }
+}
+
+@keyframes blink {
+
+    0%,
+    100% {
+        opacity: 1;
+    }
+
+    50% {
+        opacity: 0.3;
+    }
+}
+
+/* Pulse animation for listening indicator */
+@keyframes pulse {
+    0% {
+        transform: scale(0.8);
+        opacity: 0.5;
+    }
+
+    50% {
+        transform: scale(1.2);
+        opacity: 1;
+    }
+
+    100% {
+        transform: scale(0.8);
+        opacity: 0.5;
+    }
+}
+
+/* Responsive design */
+@media (max-width: 768px) {
+    .chat-container {
+        height: calc(100vh - 40px);
+        max-width: 100%;
+        border-radius: 0;
+    }
+
+    .chat-input {
+        button {
+            span {
+                display: none;
+            }
+
+            i {
+                margin-right: 0;
+            }
+        }
+    }
+}
+
+/* For very tall screens, limit maximum height */
+@media (min-height: 1000px) {
+    .chat-container {
+        height: 700px; // Slightly taller on very tall screens
     }
 }
