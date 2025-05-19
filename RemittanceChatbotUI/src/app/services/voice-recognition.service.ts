@@ -1,3 +1,4 @@
+// Voice Recognition Service
 import { Injectable, PLATFORM_ID, Inject } from '@angular/core';
 import { isPlatformBrowser } from '@angular/common';
 import { BehaviorSubject, Subject } from 'rxjs';
@@ -69,6 +70,8 @@ export class VoiceRecognitionService {
                     this.transcriptSubject.next(transcript);
 
                     // Only consider it final after a short silence or when explicitly marked final
+
+                    // Log final results only
                     if (event.results[current].isFinal) {
                         console.log('Final result:', transcript);
                         // We could add additional delay here if needed

@@ -138,18 +138,35 @@ export class DepositFormComponent implements OnInit {
         this.submitting = true;
         this.errorMessage = '';
 
-        // Create a deposit request object that matches the backend expected type
-        const depositRequest: DepositRequest = {
+        // Create a deposit request object based on payment method
+        const paymentMethod = this.depositForm.get('paymentMethod')?.value;
+        let depositRequest: DepositRequest;
+
+        // Common fields for all payment methods
+        const baseRequest = {
             amount: this.depositForm.get('amount')?.value,
             currency: this.depositForm.get('currency')?.value,
-            paymentMethod: this.depositForm.get('paymentMethod')?.value,
-            cardDetails: this.depositForm.get('paymentMethod')?.value === 'card' ? {
-                cardNumber: this.depositForm.get('cardNumber')?.value,
-                expiryDate: this.depositForm.get('expiryDate')?.value,
-                cvv: this.depositForm.get('cvv')?.value,
-                cardHolderName: this.depositForm.get('cardHolderName')?.value
-            } : undefined
+            paymentMethod: paymentMethod
         };
+
+        // Add card details only if payment method is 'card'
+        if (paymentMethod === 'card') {
+            depositRequest = {
+                ...baseRequest,
+                cardDetails: {
+                    cardNumber: this.depositForm.get('cardNumber')?.value,
+                    expiryDate: this.depositForm.get('expiryDate')?.value,
+                    cvv: this.depositForm.get('cvv')?.value,
+                    cardHolderName: this.depositForm.get('cardHolderName')?.value
+                }
+            };
+        } else {
+            // For bank or wallet payments, don't include card details
+            depositRequest = baseRequest;
+        }
+
+        // Debug log to see exactly what we're sending
+        console.log('Sending deposit request from form:', depositRequest);
 
         this.remittanceService.depositMoney(depositRequest).subscribe({
             next: (result) => {
@@ -183,7 +200,7 @@ export class DepositFormComponent implements OnInit {
             },
             error: (error) => {
                 console.error('Deposit error:', error);
-                this.errorMessage = error.error?.message || 'Failed to process your deposit. Please try again.';
+                this.errorMessage = error.message || 'Failed to process your deposit. Please try again.';
                 this.submitting = false;
             }
         });

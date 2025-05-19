@@ -1,3 +1,5 @@
+// Fix for Program.cs - Handling nullable configuration values
+
 using Microsoft.EntityFrameworkCore;
 using RemittanceAPI.Data;
 using RemittanceAPI.Services;
@@ -17,21 +19,17 @@ builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
 // Add CORS
-// In Program.cs
-// Ensure CORS is configured properly
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowSpecificOrigin",
-        builder => builder
+        policy => policy
             .WithOrigins("http://localhost:4200") // Your Angular app URL
             .AllowAnyMethod()
             .AllowAnyHeader()
             .AllowCredentials());
 });
 
-
-
-// Add JWT Authentication
+// Add JWT Authentication with proper null handling
 builder.Services.AddAuthentication(options =>
 {
     options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
@@ -39,16 +37,25 @@ builder.Services.AddAuthentication(options =>
 })
 .AddJwtBearer(options =>
 {
+    // Safely handle potentially null configuration values
+    var jwtSecret = builder.Configuration["JWT:Secret"];
+    var jwtIssuer = builder.Configuration["JWT:ValidIssuer"];
+    var jwtAudience = builder.Configuration["JWT:ValidAudience"];
+
+    if (string.IsNullOrEmpty(jwtSecret))
+    {
+        throw new InvalidOperationException("JWT:Secret configuration is missing");
+    }
+
     options.TokenValidationParameters = new TokenValidationParameters
     {
         ValidateIssuer = true,
         ValidateAudience = true,
         ValidateLifetime = true,
         ValidateIssuerSigningKey = true,
-        ValidIssuer = builder.Configuration["JWT:ValidIssuer"],
-        ValidAudience = builder.Configuration["JWT:ValidAudience"],
-        IssuerSigningKey = new SymmetricSecurityKey(
-            Encoding.UTF8.GetBytes(builder.Configuration["JWT:Secret"]))
+        ValidIssuer = jwtIssuer,
+        ValidAudience = jwtAudience,
+        IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSecret))
     };
 });
 

@@ -506,6 +506,7 @@ export class ChatService {
     }
 
     // Process "send money" command
+    // Process "send money" command
     private processSendMoneyCommand(text: string, botMessageId: string): Observable<BotCommand> {
         console.log('Processing send money command:', text);
 
@@ -658,7 +659,7 @@ export class ChatService {
                 this.setConversationState({
                     flow: 'send_money',
                     tempRecipient: {
-                        name: existingRecipient.name,
+                        name: recipientName,
                         id: existingRecipient.id,
                         accountNumber: existingRecipient.accountNumber || '',
                         bankName: existingRecipient.bankName || '',
@@ -672,13 +673,13 @@ export class ChatService {
                     collectingField: 'confirmation'
                 });
             } else {
-                responseText = `I found ${existingRecipient.name} in your saved recipients. How much would you like to send to ${existingRecipient.name}?`;
+                responseText = `I found ${recipientName} in your saved recipients. How much would you like to send to ${recipientName}?`;
 
                 // Set up conversation state to collect amount
                 this.setConversationState({
                     flow: 'send_money',
                     tempRecipient: {
-                        name: existingRecipient.name,
+                        name: recipientName,
                         id: existingRecipient.id,
                         accountNumber: existingRecipient.accountNumber || '',
                         bankName: existingRecipient.bankName || '',
@@ -697,7 +698,7 @@ export class ChatService {
             return of({
                 intent: 'send_money',
                 entities: {
-                    recipient: existingRecipient.name,
+                    recipient: recipientName,
                     recipientExists: true,
                     amount: amount > 0 ? amount : undefined,
                     currency: currency
@@ -747,6 +748,7 @@ export class ChatService {
             });
         }
     }
+
 
     private findRecipientByName(name: string): Recipient | null {
         if (!name || !this.cachedRecipients || !this.cachedRecipients.length) return null;
@@ -1644,8 +1646,6 @@ export class ChatService {
 
             // We can use the remittanceService to find the user
             // Add this recipient ID to the user's saved recipients
-            // You'll need to implement this method in your backend service
-            // This is a placeholder for what you need to implement
             await this.remittanceService.addRecipientToUserSaved(newRecipientId).toPromise();
 
             // After successfully adding, reload recipient cache

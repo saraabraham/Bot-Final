@@ -1,3 +1,5 @@
+// Fixed RemittanceController.cs with proper imports and null handling
+
 using System;
 using System.Security.Claims;
 using System.Threading.Tasks;
@@ -6,6 +8,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
 using RemittanceAPI.Models;
 using RemittanceAPI.Services;
+using System.Text.Json; // Add this import for JsonSerializer
 
 namespace RemittanceAPI.Controllers
 {
@@ -43,18 +46,20 @@ namespace RemittanceAPI.Controllers
                 return StatusCode(500, new { message = "An error occurred while getting exchange rate" });
             }
         }
+
         [Authorize]
         [HttpPost("recipients/add-to-saved")]
         public async Task<IActionResult> AddRecipientToSaved([FromBody] AddRecipientRequest request)
         {
-            if (string.IsNullOrEmpty(request.RecipientId))
+            if (string.IsNullOrEmpty(request?.RecipientId))
             {
                 return BadRequest(new { message = "Recipient ID is required" });
             }
 
             try
             {
-                string userId = User.FindFirst("sub")?.Value;
+                // Handle potential null user ID with proper null checking
+                string? userId = User.FindFirst("sub")?.Value;
                 if (string.IsNullOrEmpty(userId))
                 {
                     userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
@@ -66,7 +71,6 @@ namespace RemittanceAPI.Controllers
                     }
                 }
 
-                // Use the remittance service instead of directly accessing the db context
                 var result = await _remittanceService.AddRecipientToSavedAsync(userId, request.RecipientId);
 
                 if (result)
@@ -84,8 +88,6 @@ namespace RemittanceAPI.Controllers
                 return StatusCode(500, new { message = $"An error occurred: {ex.Message}" });
             }
         }
-
-
 
         [HttpGet("fees")]
         public async Task<IActionResult> CalculateFees([FromQuery] decimal amount, [FromQuery] string currency, [FromQuery] string method)
@@ -118,12 +120,11 @@ namespace RemittanceAPI.Controllers
         {
             try
             {
-                string userId = User.FindFirst("sub")?.Value;
+                string? userId = User.FindFirst("sub")?.Value;
                 _logger.LogInformation($"GetSavedRecipients - User ID from token: {userId}");
 
                 if (string.IsNullOrEmpty(userId))
                 {
-                    // Try alternative claim types
                     userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
                     _logger.LogInformation($"GetSavedRecipients - User ID from NameIdentifier: {userId}");
 
@@ -175,10 +176,9 @@ namespace RemittanceAPI.Controllers
 
             try
             {
-                string userId = User.FindFirst("sub")?.Value;
+                string? userId = User.FindFirst("sub")?.Value;
                 if (string.IsNullOrEmpty(userId))
                 {
-                    // Try alternative claim types
                     userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
                     _logger.LogInformation($"SendMoney - User ID from NameIdentifier: {userId}");
 
@@ -188,26 +188,22 @@ namespace RemittanceAPI.Controllers
                     }
                 }
 
-                // Set the sender ID from the authenticated user
                 transaction.SenderId = userId;
 
-                // Log the incoming transaction data for debugging
+                // Log the incoming transaction data for debugging (with proper JsonSerializer)
                 _logger.LogInformation($"Received transaction: Amount={transaction.Amount}, " +
                     $"Currency={transaction.Currency}, " +
                     $"RecipientId={transaction.Recipient?.Id ?? "null"}, " +
                     $"RecipientName={transaction.Recipient?.Name ?? "null"}, " +
                     $"PaymentMethod={transaction.PaymentMethod}");
 
-                // Validate recipient
                 if (transaction.Recipient == null)
                 {
                     return BadRequest(new { message = "Recipient information is required" });
                 }
 
-                // Always ensure we have a fresh ID for each transaction
                 transaction.Id = Guid.NewGuid().ToString();
 
-                // Make sure required fields are present
                 if (transaction.Amount <= 0)
                 {
                     return BadRequest(new { message = "Amount must be greater than zero" });
@@ -232,13 +228,14 @@ namespace RemittanceAPI.Controllers
                 return StatusCode(500, new { message = $"Error processing transaction: {ex.Message}" });
             }
         }
+
         [Authorize]
         [HttpGet("history")]
         public async Task<IActionResult> GetTransactionHistory()
         {
             try
             {
-                string userId = User.FindFirst("sub")?.Value;
+                string? userId = User.FindFirst("sub")?.Value;
                 if (string.IsNullOrEmpty(userId))
                 {
                     return BadRequest(new { message = "User ID not found" });
@@ -280,16 +277,13 @@ namespace RemittanceAPI.Controllers
             }
         }
 
-        // Add these endpoints to the RemittanceController.cs
-
-        // Add this endpoint to check balance
         [Authorize]
         [HttpGet("balance")]
         public async Task<IActionResult> GetUserBalance()
         {
             try
             {
-                string userId = User.FindFirst("sub")?.Value;
+                string? userId = User.FindFirst("sub")?.Value;
                 if (string.IsNullOrEmpty(userId))
                 {
                     userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
@@ -311,19 +305,18 @@ namespace RemittanceAPI.Controllers
             }
         }
 
-        // Add this endpoint to find or create a recipient
         [Authorize]
         [HttpPost("recipients/find-or-create")]
         public async Task<IActionResult> FindOrCreateRecipient([FromBody] FindRecipientRequest request)
         {
-            if (string.IsNullOrEmpty(request.Name))
+            if (string.IsNullOrEmpty(request?.Name))
             {
                 return BadRequest(new { message = "Recipient name is required" });
             }
 
             try
             {
-                string userId = User.FindFirst("sub")?.Value;
+                string? userId = User.FindFirst("sub")?.Value;
                 if (string.IsNullOrEmpty(userId))
                 {
                     userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
@@ -343,9 +336,7 @@ namespace RemittanceAPI.Controllers
                 return StatusCode(500, new { message = $"An error occurred: {ex.Message}" });
             }
         }
-        // Add to RemittanceController.cs
 
-        // Add this endpoint for deposits
         [Authorize]
         [HttpPost("deposit")]
         public async Task<IActionResult> DepositMoney([FromBody] DepositRequest request)
@@ -357,10 +348,12 @@ namespace RemittanceAPI.Controllers
 
             try
             {
-                string userId = User.FindFirst("sub")?.Value;
+                // Log the incoming request for debugging
+                _logger.LogInformation($"Received deposit request: {JsonSerializer.Serialize(request)}");
+
+                string? userId = User.FindFirst("sub")?.Value;
                 if (string.IsNullOrEmpty(userId))
                 {
-                    // Try alternative claim types
                     userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
                     _logger.LogInformation($"DepositMoney - User ID from NameIdentifier: {userId}");
 
@@ -372,6 +365,10 @@ namespace RemittanceAPI.Controllers
 
                 // Process the deposit
                 var result = await _remittanceService.ProcessDepositAsync(userId, request);
+
+                // Log success
+                _logger.LogInformation($"Deposit successful: {JsonSerializer.Serialize(result)}");
+
                 return Ok(result);
             }
             catch (Exception ex)
@@ -381,5 +378,4 @@ namespace RemittanceAPI.Controllers
             }
         }
     }
-
 }

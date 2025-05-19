@@ -4,6 +4,6 @@ namespace RemittanceAPI.Models
 {
     public class FindRecipientRequest
     {
-        public string Name { get; set; }
+        public string Name { get; set; } = string.Empty;
     }
 }
