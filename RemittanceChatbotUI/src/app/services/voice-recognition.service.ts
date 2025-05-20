@@ -1,4 +1,5 @@
-// Voice Recognition Service
+// Complete VoiceRecognitionService with all methods and properties
+
 import { Injectable, PLATFORM_ID, Inject } from '@angular/core';
 import { isPlatformBrowser } from '@angular/common';
 import { BehaviorSubject, Subject } from 'rxjs';
@@ -23,6 +24,11 @@ export class VoiceRecognitionService {
     // Add an error subject to track errors
     private errorSubject = new Subject<string>();
     public error$ = this.errorSubject.asObservable();
+
+    // Enhanced properties for better capture
+    private finalTranscript = '';
+    private interimTranscript = '';
+    private isProcessing = false;
 
     constructor(@Inject(PLATFORM_ID) private platformId: Object) {
         this.isBrowser = isPlatformBrowser(this.platformId);
@@ -51,39 +57,83 @@ export class VoiceRecognitionService {
 
         try {
             this.recognition = new SpeechRecognition();
-            this.recognition.continuous = false;
-            this.recognition.interimResults = true;
+
+            // CRITICAL: Enhanced settings for better capture
+            this.recognition.continuous = true; // Keep listening for longer phrases
+            this.recognition.interimResults = true; // Get partial results
+            this.recognition.maxAlternatives = 3; // Get multiple alternatives
             this.recognition.lang = 'en-US';
+
+            // Add timeout settings
+            this.recognition.speechTimeout = 10000; // 10 seconds
+            this.recognition.speechTimeoutBuffered = 2000; // 2 seconds buffer
+            this.recognition.maxSpeechTime = 15000; // 15 seconds max
 
             this.recognition.onstart = () => {
                 console.log('Speech recognition started');
                 this.isListeningSubject.next(true);
+                this.finalTranscript = '';
+                this.interimTranscript = '';
+                this.isProcessing = false;
             };
 
             this.recognition.onresult = (event: any) => {
-                // Using requestAnimationFrame for smoother UI updates
-                requestAnimationFrame(() => {
-                    const current = event.resultIndex;
-                    const transcript = event.results[current][0].transcript;
+                console.log('Recognition result event:', event);
 
-                    // Update transcript for UI
-                    this.transcriptSubject.next(transcript);
+                // Process all results to capture the complete command
+                let interimTranscript = '';
+                let finalTranscript = '';
 
-                    // Only consider it final after a short silence or when explicitly marked final
+                for (let i = event.resultIndex; i < event.results.length; i++) {
+                    const result = event.results[i];
+                    const transcript = result[0].transcript;
 
-                    // Log final results only
-                    if (event.results[current].isFinal) {
-                        console.log('Final result:', transcript);
-                        // We could add additional delay here if needed
+                    if (result.isFinal) {
+                        finalTranscript += transcript + ' ';
+                        console.log('Final transcript segment:', transcript);
+                    } else {
+                        interimTranscript += transcript + ' ';
+                        console.log('Interim transcript segment:', transcript);
                     }
-                });
+                }
+
+                // Update the complete transcript
+                this.finalTranscript += finalTranscript;
+                this.interimTranscript = interimTranscript;
+
+                // Combine final and interim transcripts for real-time feedback
+                const completeTranscript = (this.finalTranscript + this.interimTranscript).trim();
+
+                console.log('Complete transcript so far:', completeTranscript);
+
+                // Update the transcript subject with the complete text
+                this.transcriptSubject.next(completeTranscript);
+
+                // If we have a final result and it looks complete, we can process it
+                if (finalTranscript.trim()) {
+                    const fullCommand = this.finalTranscript.trim();
+                    console.log('Full command captured:', fullCommand);
+
+                    // Check if the command seems complete (has key elements)
+                    if (this.isCommandComplete(fullCommand)) {
+                        console.log('Command appears complete, will process after speech ends');
+                    }
+                }
             };
 
-            // Add a longer recognition timeout to give more time to speak
-            this.recognition.maxSpeechTime = 10000; // 10 seconds
-
-            // Add better handling for continuing speech
-            this.recognition.continuous = true; // Allow continuous recognition
+            this.recognition.onspeechend = () => {
+                console.log('Speech ended');
+                // Small delay to ensure all results are processed
+                setTimeout(() => {
+                    if (!this.isProcessing) {
+                        const finalCommand = this.finalTranscript.trim();
+                        if (finalCommand) {
+                            console.log('Processing final command:', finalCommand);
+                            this.transcriptSubject.next(finalCommand);
+                        }
+                    }
+                }, 500);
+            };
 
             this.recognition.onerror = (event: any) => {
                 console.error('Speech recognition error', event);
@@ -97,6 +147,8 @@ export class VoiceRecognitionService {
                     this.errorSubject.next("Network error occurred. Please check your connection.");
                 } else if (event.error === 'not-allowed') {
                     this.errorSubject.next("Microphone access denied. Please enable microphone permissions.");
+                } else if (event.error === 'audio-capture') {
+                    this.errorSubject.next("Audio capture failed. Please check your microphone.");
                 } else {
                     this.errorSubject.next(`Speech recognition error: ${event.error}`);
                 }
@@ -107,6 +159,12 @@ export class VoiceRecognitionService {
             this.recognition.onend = () => {
                 console.log('Speech recognition ended');
                 this.isListeningSubject.next(false);
+
+                // Process the final transcript if we haven't already
+                if (!this.isProcessing && this.finalTranscript.trim()) {
+                    console.log('Final processing of transcript:', this.finalTranscript.trim());
+                    this.transcriptSubject.next(this.finalTranscript.trim());
+                }
             };
 
             this.recognitionInitialized = true;
@@ -114,6 +172,23 @@ export class VoiceRecognitionService {
             console.error('Error initializing speech recognition:', error);
             this.errorSubject.next('Failed to initialize speech recognition');
         }
+    }
+
+    // Helper method to check if a command appears complete
+    private isCommandComplete(command: string): boolean {
+        const lowerCommand = command.toLowerCase();
+
+        // Check for common complete command patterns
+        const completePatterns = [
+            /send\s+.*\s+to\s+\w+/,  // "send $10 to John"
+            /transfer\s+.*\s+to\s+\w+/, // "transfer money to John"
+            /deposit\s+\$?\d+/, // "deposit $100"
+            /check\s+balance/, // "check balance"
+            /exchange\s+rate/, // "exchange rate"
+            /show\s+recipients/, // "show recipients"
+        ];
+
+        return completePatterns.some(pattern => pattern.test(lowerCommand));
     }
 
     public async start(): Promise<void> {
@@ -129,17 +204,23 @@ export class VoiceRecognitionService {
         this.transcriptSubject.next('');
         this.audioChunks = [];
         this.audioBlob = null;
+        this.finalTranscript = '';
+        this.interimTranscript = '';
+        this.isProcessing = false;
 
         // IMMEDIATELY emit the listening state for UI feedback
         this.isListeningSubject.next(true);
 
         try {
-            // Request microphone permission
+            // Request microphone permission with enhanced settings
             console.log('Requesting microphone permission...');
             this.stream = await navigator.mediaDevices.getUserMedia({
                 audio: {
                     echoCancellation: true,
-                    noiseSuppression: true
+                    noiseSuppression: true,
+                    autoGainControl: true,
+                    sampleRate: 44100,
+                    channelCount: 1
                 }
             });
             console.log('Microphone permission granted!', this.stream);
@@ -149,8 +230,9 @@ export class VoiceRecognitionService {
 
             if (this.recognition) {
                 try {
-                    // Try to start recognition
+                    // Try to start recognition with retry logic
                     this.recognition.start();
+                    console.log('Speech recognition started successfully');
                 } catch (e) {
                     console.error('Error starting speech recognition:', e);
 
@@ -161,7 +243,7 @@ export class VoiceRecognitionService {
                         this.initRecognition();
                         setTimeout(() => {
                             this.recognition?.start();
-                        }, 10); // Minimal timeout to avoid browser issues
+                        }, 100);
                     }
                 }
             } else {
@@ -169,7 +251,9 @@ export class VoiceRecognitionService {
                 this.initRecognition();
                 if (this.recognition) {
                     console.log('Initialized recognition, starting...');
-                    this.recognition.start();
+                    setTimeout(() => {
+                        this.recognition.start();
+                    }, 100);
                 }
             }
         } catch (err) {
@@ -193,6 +277,8 @@ export class VoiceRecognitionService {
         // Skip if not in browser environment
         if (!this.isBrowser) return;
 
+        this.isProcessing = true; // Prevent further processing
+
         try {
             if (this.recognition) {
                 this.recognition.stop();
@@ -209,6 +295,14 @@ export class VoiceRecognitionService {
             this.stream.getTracks().forEach(track => track.stop());
             this.stream = null;
         }
+
+        // Ensure final transcript is available
+        setTimeout(() => {
+            if (this.finalTranscript.trim()) {
+                console.log('Emitting final transcript on stop:', this.finalTranscript.trim());
+                this.transcriptSubject.next(this.finalTranscript.trim());
+            }
+        }, 100);
     }
 
     private startAudioRecording(stream: MediaStream): void {
@@ -267,6 +361,8 @@ export class VoiceRecognitionService {
 
     public clearTranscript(): void {
         this.transcriptSubject.next('');
+        this.finalTranscript = '';
+        this.interimTranscript = '';
     }
 
     // Add a reset method to clear all state
@@ -275,10 +371,33 @@ export class VoiceRecognitionService {
         this.audioChunks = [];
         this.audioBlob = null;
         this.isListeningSubject.next(false);
+        this.finalTranscript = '';
+        this.interimTranscript = '';
+        this.isProcessing = false;
 
         if (this.stream) {
             this.stream.getTracks().forEach(track => track.stop());
             this.stream = null;
         }
+    }
+
+    // Get the final transcript (useful for debugging and chat component)
+    public getFinalTranscript(): string {
+        return this.finalTranscript.trim();
+    }
+
+    // Get the current transcript (combines final + interim)
+    public getCurrentTranscript(): string {
+        return (this.finalTranscript + this.interimTranscript).trim();
+    }
+
+    // Check if voice recognition is currently processing
+    public isCurrentlyListening(): boolean {
+        return this.isListeningSubject.value;
+    }
+
+    // Get the last captured command for debugging
+    public getLastCommand(): string {
+        return this.finalTranscript.trim();
     }
 }

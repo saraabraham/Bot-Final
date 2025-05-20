@@ -27,7 +27,9 @@ namespace RemittanceAPI.Controllers
             }
 
             // In a real app, we would get the user ID from the authenticated user
-            string userId = User.Identity.IsAuthenticated ? User.FindFirst("sub")?.Value : null;
+            string? userId = User.Identity?.IsAuthenticated == true
+                ? User.FindFirst("sub")?.Value
+                : null;
 
             var command = await _chatbotService.ProcessMessageAsync(message.Text, userId);
 
@@ -43,7 +45,9 @@ namespace RemittanceAPI.Controllers
             }
 
             // In a real app, we would get the user ID from the authenticated user
-            string userId = User.Identity.IsAuthenticated ? User.FindFirst("sub")?.Value : null;
+            string? userId = User.Identity?.IsAuthenticated == true
+                ? User.FindFirst("sub")?.Value
+                : null;
 
             using var stream = audio.OpenReadStream();
             var command = await _chatbotService.ProcessVoiceAsync(stream, userId);
@@ -55,7 +59,12 @@ namespace RemittanceAPI.Controllers
         [HttpGet("history")]
         public async Task<IActionResult> GetChatHistory([FromQuery] int limit = 50)
         {
-            string userId = User.FindFirst("sub")?.Value;
+            string? userId = User.FindFirst("sub")?.Value;
+
+            if (string.IsNullOrEmpty(userId))
+            {
+                return BadRequest(new { message = "User ID not found in token" });
+            }
 
             var history = await _chatbotService.GetChatHistoryAsync(userId, limit);
 

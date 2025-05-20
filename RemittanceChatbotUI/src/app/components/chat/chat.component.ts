@@ -205,6 +205,51 @@ export class ChatComponent implements OnInit, OnDestroy, AfterViewChecked {
             });
     }
 
+
+    // Helper method to determine if a command is complete
+    private isCompleteCommand(transcript: string): boolean {
+        const lowerTranscript = transcript.toLowerCase().trim();
+
+        // Define patterns for complete commands
+        const completeCommandPatterns = [
+            // Send money commands with amount and recipient
+            /send\s+\$?\d+.*to\s+\w+/,
+            /transfer\s+\$?\d+.*to\s+\w+/,
+            /pay\s+\$?\d+.*to\s+\w+/,
+
+            // Deposit commands with amount
+            /deposit\s+\$?\d+/,
+            /add\s+\$?\d+/,
+
+            // Simple complete commands
+            /^(check\s+balance|show\s+balance|my\s+balance)$/,
+            /^(exchange\s+rate|currency\s+rate|check\s+rate)$/,
+            /^(show\s+recipients|manage\s+recipients|my\s+recipients)$/,
+            /^(help|what\s+can\s+you\s+do)$/,
+
+            // More complex but complete patterns
+            /send\s+.*\s+to\s+\w+\s+using\s+\w+/,
+            /deposit\s+\$?\d+\s+using\s+\w+/,
+        ];
+
+        const isComplete = completeCommandPatterns.some(pattern => pattern.test(lowerTranscript));
+        console.log(`Command "${transcript}" is ${isComplete ? 'complete' : 'incomplete'}`);
+
+        return isComplete;
+    }
+    updateBotMessage(messageId: string, text: string): void {
+        const messageIndex = this.messages.findIndex(msg => msg.id === messageId);
+        if (messageIndex !== -1) {
+            this.messages[messageIndex] = {
+                ...this.messages[messageIndex],
+                text: text,
+                isProcessing: false
+            };
+            this.cdRef.detectChanges();
+        }
+    }
+
+
     // Check if voice recognition is supported
     private checkVoiceSupport(): void {
         const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
@@ -367,8 +412,6 @@ export class ChatComponent implements OnInit, OnDestroy, AfterViewChecked {
         return id;
     }
 
-    // Voice input methods
-    // Optimized voice button handler
     async voiceButtonClicked(): Promise<void> {
         console.log('Voice button clicked, current state:', this.isListening ? 'listening' : 'not listening');
 
@@ -396,7 +439,6 @@ export class ChatComponent implements OnInit, OnDestroy, AfterViewChecked {
         // Start voice recognition
         this.startVoiceRecognition();
     }
-
     // Optimized start voice recognition
     startVoiceRecognition(): void {
         if (!this.voiceRecognitionSupported) {
@@ -415,6 +457,7 @@ export class ChatComponent implements OnInit, OnDestroy, AfterViewChecked {
         // Start the voice recognition
         this.voiceService.start();
     }
+
 
     // Update the listening message to show feedback in the UI
     private updateListeningMessage(transcript: string): void {

@@ -384,7 +384,7 @@ namespace RemittanceAPI.Services
                 .ToListAsync();
         }
 
-        public async Task<RemittanceTransaction> GetTransactionStatusAsync(string transactionId)
+        public async Task<RemittanceTransaction?> GetTransactionStatusAsync(string transactionId)
         {
             _logger.LogInformation($"Getting status for transaction {transactionId}");
 
